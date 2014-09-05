@@ -353,12 +353,14 @@ long drm_ioctl(struct file *filp,
 	if (!func) {
 		DRM_DEBUG("no function\n");
 		retcode = -EINVAL;
+#ifndef CONFIG_NO_GPU_AUTHENTICATION
 	} else if (((ioctl->flags & DRM_ROOT_ONLY) && !capable(CAP_SYS_ADMIN)) ||
 		   ((ioctl->flags & DRM_AUTH) && !drm_is_render_client(file_priv) && !file_priv->authenticated) ||
 		   ((ioctl->flags & DRM_MASTER) && !file_priv->is_master) ||
 		   (!(ioctl->flags & DRM_CONTROL_ALLOW) && (file_priv->minor->type == DRM_MINOR_CONTROL)) ||
 		   (!(ioctl->flags & DRM_RENDER_ALLOW) && drm_is_render_client(file_priv))) {
 		retcode = -EACCES;
+#endif
 	} else {
 		if (cmd & (IOC_IN | IOC_OUT)) {
 			if (asize <= sizeof(stack_kdata)) {
