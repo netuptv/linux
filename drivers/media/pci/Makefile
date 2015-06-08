@@ -12,7 +12,6 @@ obj-y        +=	ttpci/		\
 		ddbridge/	\
 		b2c2/		\
 		saa7146/	\
-		smipcie/	\
 		netup/
 
 obj-$(CONFIG_VIDEO_IVTV) += ivtv/
