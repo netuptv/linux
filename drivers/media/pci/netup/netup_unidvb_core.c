@@ -86,9 +86,9 @@ static int netup_unidvb_tuner_ctrl(void *priv, int is_dvb_tc)
 
 	if (!priv)
 		return -EINVAL;
+	ndev = dma->ndev;
 	dprintk("%s(): num %d is_dvb_tc %d\n",
 		__func__, dma->num, is_dvb_tc);
-	ndev = dma->ndev;
 	reg = readb(ndev->bmmio0 + GPIO_REG_IO);
 	mask = (dma->num == 0) ? GPIO_RFA_CTL : GPIO_RFB_CTL;
 	if (!is_dvb_tc)
