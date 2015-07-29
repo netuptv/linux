@@ -34,7 +34,7 @@
 #include "stv0900_priv.h"
 #include "stv0900_init.h"
 
-int stvdebug = 1;
+int stvdebug = 0;
 module_param_named(debug, stvdebug, int, 0644);
 
 /* internal params node */
