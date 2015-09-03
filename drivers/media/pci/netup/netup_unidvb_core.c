@@ -44,6 +44,7 @@ DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
 
 #define DRIVER_NAME	"netup_unidvb"
 
+static void netup_unidvb_pf_init(struct netup_unidvb_dev *ndev, int nr);
 static int debug;
 module_param(debug, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 static int spi_enable;
@@ -85,9 +86,9 @@ static int netup_unidvb_tuner_ctrl(void *priv, int is_dvb_tc)
 
 	if (!priv)
 		return -EINVAL;
+	ndev = dma->ndev;
 	dprintk("%s(): num %d is_dvb_tc %d\n",
 		__func__, dma->num, is_dvb_tc);
-	ndev = dma->ndev;
 	reg = readb(ndev->bmmio0 + GPIO_REG_IO);
 	mask = (dma->num == 0) ? GPIO_RFA_CTL : GPIO_RFB_CTL;
 	if (!is_dvb_tc)
@@ -397,6 +398,7 @@ static int netup_unidvb_dvb_init(
 			__func__, num);
 		goto frontend_detach;
 	}
+	netup_unidvb_pf_init(ndev, num);
 	dev_info(&ndev->pci_dev->dev, "DVB init done, num=%d\n", num);
 	return 0;
 frontend_detach:
@@ -631,6 +633,103 @@ static int netup_unidvb_ci_setup(
 		netup_unidvb_ci_unregister(ndev, 0);
 	return res;
 }
+
+static void netup_unidvb_pf_set_pid(struct netup_pid_filter *pf,
+                                    u16 pid, int enable)
+{
+        u8 msk = 1 << (pid % 8);
+        u8 reg = readb(pf->pid_map + pid / 8);
+
+        writeb(enable ? (reg | msk) : (reg & ~msk), pf->pid_map + pid / 8);
+        dev_dbg(&pf->dev->pci_dev->dev, "%s(): #%d: PID 0x%04x set to %d\n",
+                __func__, pf->nr, pid, enable);
+}
+
+static void netup_unidvb_pf_clear(struct netup_unidvb_dev *ndev, int nr, int enable)
+{
+        dev_dbg(&ndev->pci_dev->dev, "%s(): #%d enable %d\n", __func__, nr, enable);
+        memset_io(ndev->pf[nr].pid_map, enable ? 0xff : 0x00, NETUP_PF_SIZE);
+}
+
+static int netup_unidvb_start_feed(struct dvb_demux_feed *feed)
+{
+        struct dvb_demux *demux = feed->demux;
+        struct netup_pid_filter *pf = (struct netup_pid_filter *)demux->priv;
+        struct netup_unidvb_dev *ndev;
+        int ret = -EINVAL;
+
+        if (!pf)
+                return ret;
+        ndev = pf->dev;
+        dev_dbg(&ndev->pci_dev->dev, "%s(): #%d\n", __func__, pf->nr);
+        if(feed->pid < DMX_MAX_PID)
+                netup_unidvb_pf_set_pid(pf, feed->pid, 0);
+        else
+                netup_unidvb_pf_clear(ndev, pf->nr, 0);
+        if  (pf->start_feed) {
+                demux->priv = pf->priv;
+                ret = pf->start_feed(feed);
+                demux->priv = pf;
+        }
+        return ret;
+}
+
+static int netup_unidvb_stop_feed(struct dvb_demux_feed *feed)
+{
+        struct dvb_demux *demux = feed->demux;
+        struct netup_pid_filter *pf = (struct netup_pid_filter *)demux->priv;
+        struct netup_unidvb_dev *ndev;
+        int ret = -EINVAL;
+
+        if (!pf)
+                return ret;
+        ndev = pf->dev;
+        dev_dbg(&ndev->pci_dev->dev, "%s(): #%d\n", __func__, pf->nr);
+        if(feed->pid < DMX_MAX_PID)
+                netup_unidvb_pf_set_pid(pf, feed->pid, 1);
+        else
+                netup_unidvb_pf_clear(ndev, pf->nr, 1);
+        if  (pf->stop_feed) {
+                demux->priv = pf->priv;
+                ret = pf->stop_feed(feed);
+                demux->priv = pf;
+        }
+        return ret;
+}
+
+static void netup_unidvb_pf_init(struct netup_unidvb_dev *ndev, int nr)
+{
+        struct dvb_demux *demux;
+        struct videobuf_dvb_frontend *fe;
+        struct netup_pid_filter *pf;
+
+        if (nr < 0 || nr > 1) {
+                dev_err(&ndev->pci_dev->dev, "%s(): invalid filter #%d\n",
+                        __func__, nr);
+                return;
+        }
+        pf = &ndev->pf[nr];
+        pf->pid_map = ndev->bmmio0 +
+                (nr == 0 ? NETUP_PF0_ADDR : NETUP_PF1_ADDR);
+        netup_unidvb_pf_clear(ndev, nr, 1);
+        fe = videobuf_dvb_get_frontend(&ndev->frontends[nr], 1);
+        if (fe) {
+                demux = &fe->dvb.demux;
+                pf->start_feed = demux->start_feed;
+                pf->stop_feed = demux->stop_feed;
+                pf->priv = demux->priv;
+                pf->dev = ndev;
+                pf->nr = nr;
+                demux->start_feed = netup_unidvb_start_feed;
+                demux->stop_feed = netup_unidvb_stop_feed;
+                demux->priv = pf;
+                dev_info(&ndev->pci_dev->dev, "%s(): enabled for #%d\n",
+                        __func__, nr);
+        } else
+                dev_info(&ndev->pci_dev->dev, "%s(): failed for #%d\n",
+                        __func__, nr);
+}
+
 
 static int netup_unidvb_request_mmio(struct pci_dev *pci_dev)
 {

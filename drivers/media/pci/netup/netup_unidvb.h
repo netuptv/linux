@@ -83,6 +83,12 @@
 #define BIT_DMA_ERROR		2
 #define BIT_DMA_IRQ		0x200
 
+/* PID filter */
+#define NETUP_PF0_ADDR         0x5400
+#define NETUP_PF1_ADDR         0x5c00
+#define NETUP_PF_SIZE          1024
+
+
 struct netup_dma_regs {
 	/* see BIT_DMA_* defines;
 	 * [24-31] - dma_current_length;
@@ -191,6 +197,15 @@ struct netup_ci_state {
 #define CAM_CTRLSTAT_READ_SET		0x4980
 #define CAM_CTRLSTAT_CLR		0x4982
 
+struct netup_pid_filter {
+       u8 __iomem              *pid_map;
+       int                     (*start_feed)(struct dvb_demux_feed *feed);
+       int                     (*stop_feed)(struct dvb_demux_feed *feed);
+       void                    *priv;
+       struct netup_unidvb_dev *dev;
+       int                     nr;
+};
+
 /* SPI flash section */
 struct netup_spi;
 
@@ -216,6 +231,8 @@ struct netup_unidvb_dev {
 	struct netup_dma	dma[2];
 	/* CI slots */
 	struct netup_ci_state	ci[2];
+	/* PID filtering */
+	struct netup_pid_filter         pf[2];
 	/* SPI */
 	struct netup_spi	*spi;
 };
