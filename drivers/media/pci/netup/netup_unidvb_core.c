@@ -637,18 +637,24 @@ static int netup_unidvb_ci_setup(
 static void netup_unidvb_pf_set_pid(struct netup_pid_filter *pf,
                                     u16 pid, int enable)
 {
+//aospan: PID-filtering temporary disabled (before we get stable version )
+#if 0
         u8 msk = 1 << (pid % 8);
         u8 reg = readb(pf->pid_map + pid / 8);
 
         writeb(enable ? (reg | msk) : (reg & ~msk), pf->pid_map + pid / 8);
         dev_dbg(&pf->dev->pci_dev->dev, "%s(): #%d: PID 0x%04x set to %d\n",
                 __func__, pf->nr, pid, enable);
+#endif
 }
 
 static void netup_unidvb_pf_clear(struct netup_unidvb_dev *ndev, int nr, int enable)
 {
+//aospan: PID-filtering temporary disabled (before we get stable version )
+#if 0
         dev_dbg(&ndev->pci_dev->dev, "%s(): #%d enable %d\n", __func__, nr, enable);
         memset_io(ndev->pf[nr].pid_map, enable ? 0xff : 0x00, NETUP_PF_SIZE);
+#endif
 }
 
 static int netup_unidvb_start_feed(struct dvb_demux_feed *feed)
