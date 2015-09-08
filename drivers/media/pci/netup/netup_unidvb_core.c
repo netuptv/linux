@@ -650,11 +650,8 @@ static void netup_unidvb_pf_set_pid(struct netup_pid_filter *pf,
 
 static void netup_unidvb_pf_clear(struct netup_unidvb_dev *ndev, int nr, int enable)
 {
-//aospan: PID-filtering temporary disabled (before we get stable version )
-#if 0
         dev_dbg(&ndev->pci_dev->dev, "%s(): #%d enable %d\n", __func__, nr, enable);
         memset_io(ndev->pf[nr].pid_map, enable ? 0xff : 0x00, NETUP_PF_SIZE);
-#endif
 }
 
 static int netup_unidvb_start_feed(struct dvb_demux_feed *feed)
@@ -668,10 +665,12 @@ static int netup_unidvb_start_feed(struct dvb_demux_feed *feed)
                 return ret;
         ndev = pf->dev;
         dev_dbg(&ndev->pci_dev->dev, "%s(): #%d\n", __func__, pf->nr);
+#if 0
         if(feed->pid < DMX_MAX_PID)
                 netup_unidvb_pf_set_pid(pf, feed->pid, 0);
         else
                 netup_unidvb_pf_clear(ndev, pf->nr, 0);
+#endif
         if  (pf->start_feed) {
                 demux->priv = pf->priv;
                 ret = pf->start_feed(feed);
@@ -691,10 +690,12 @@ static int netup_unidvb_stop_feed(struct dvb_demux_feed *feed)
                 return ret;
         ndev = pf->dev;
         dev_dbg(&ndev->pci_dev->dev, "%s(): #%d\n", __func__, pf->nr);
+#if 0
         if(feed->pid < DMX_MAX_PID)
                 netup_unidvb_pf_set_pid(pf, feed->pid, 1);
         else
                 netup_unidvb_pf_clear(ndev, pf->nr, 1);
+#endif
         if  (pf->stop_feed) {
                 demux->priv = pf->priv;
                 ret = pf->stop_feed(feed);
@@ -717,7 +718,7 @@ static void netup_unidvb_pf_init(struct netup_unidvb_dev *ndev, int nr)
         pf = &ndev->pf[nr];
         pf->pid_map = ndev->bmmio0 +
                 (nr == 0 ? NETUP_PF0_ADDR : NETUP_PF1_ADDR);
-        netup_unidvb_pf_clear(ndev, nr, 1);
+        netup_unidvb_pf_clear(ndev, nr, 0); // enable all pids by default
         fe = videobuf_dvb_get_frontend(&ndev->frontends[nr], 1);
         if (fe) {
                 demux = &fe->dvb.demux;
