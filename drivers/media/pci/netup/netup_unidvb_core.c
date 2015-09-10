@@ -49,6 +49,8 @@ static int debug;
 module_param(debug, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 static int spi_enable;
 module_param(spi_enable, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+static int hw_filter;
+module_param(hw_filter, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
 #define dprintk(args...) \
 	do { \
@@ -638,14 +640,12 @@ static void netup_unidvb_pf_set_pid(struct netup_pid_filter *pf,
                                     u16 pid, int enable)
 {
 //aospan: PID-filtering temporary disabled (before we get stable version )
-#if 0
         u8 msk = 1 << (pid % 8);
         u8 reg = readb(pf->pid_map + pid / 8);
 
         writeb(enable ? (reg | msk) : (reg & ~msk), pf->pid_map + pid / 8);
         dev_dbg(&pf->dev->pci_dev->dev, "%s(): #%d: PID 0x%04x set to %d\n",
                 __func__, pf->nr, pid, enable);
-#endif
 }
 
 static void netup_unidvb_pf_clear(struct netup_unidvb_dev *ndev, int nr, int enable)
@@ -665,12 +665,10 @@ static int netup_unidvb_start_feed(struct dvb_demux_feed *feed)
                 return ret;
         ndev = pf->dev;
         dev_dbg(&ndev->pci_dev->dev, "%s(): #%d\n", __func__, pf->nr);
-#if 0
-        if(feed->pid < DMX_MAX_PID)
+        if(feed->pid < DMX_MAX_PID && hw_filter)
                 netup_unidvb_pf_set_pid(pf, feed->pid, 0);
         else
                 netup_unidvb_pf_clear(ndev, pf->nr, 0);
-#endif
         if  (pf->start_feed) {
                 demux->priv = pf->priv;
                 ret = pf->start_feed(feed);
@@ -690,12 +688,12 @@ static int netup_unidvb_stop_feed(struct dvb_demux_feed *feed)
                 return ret;
         ndev = pf->dev;
         dev_dbg(&ndev->pci_dev->dev, "%s(): #%d\n", __func__, pf->nr);
-#if 0
-        if(feed->pid < DMX_MAX_PID)
-                netup_unidvb_pf_set_pid(pf, feed->pid, 1);
-        else
-                netup_unidvb_pf_clear(ndev, pf->nr, 1);
-#endif
+        if (hw_filter){
+            if(feed->pid < DMX_MAX_PID)
+                    netup_unidvb_pf_set_pid(pf, feed->pid, 1);
+            else
+                    netup_unidvb_pf_clear(ndev, pf->nr, 1);
+        }
         if  (pf->stop_feed) {
                 demux->priv = pf->priv;
                 ret = pf->stop_feed(feed);
