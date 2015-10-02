@@ -14,7 +14,6 @@ make -j 8
 make tar-pkg
 
 RELEASE=$(cat include/config/kernel.release)
-#TAR_FILE=${BUILD_DIR}/linux-${RELEASE}-x86.tar
 TAR_FILE=linux-${RELEASE}-x86.tar
 
 mv ${TAR_FILE} ${TARGET_DIR}/linux-3.14.tar
