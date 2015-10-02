@@ -1,25 +1,20 @@
 #! /bin/bash
 
-set -e
+set -ex
 
-if [ "${1}" = '-d' ]; then
-    DEBUG_OPTS="-t -i"
-    CMD=/bin/bash
-else
-    DEBUG_OPTS=
-    CMD=/mnt/src/build.sh
-fi
+SCRIPT_DIR=$(cd $(dirname ${0}); pwd)
+SRC_DIR=${SCRIPT_DIR}/..
+BUILD_DIR=$(pwd)/build/
+OUT_DIR=$(pwd)/out/
 
-SRC_DIR=$(cd $(dirname ${0})/..; pwd)
-BUILD_DIR=$(pwd)/build
-OUT_DIR=$(pwd)/out
+IMAGE_TAG=$(head -n 1 ${SCRIPT_DIR}/build.tag)
+IMAGE_NAME=build.netup:5000/iptv_2.0_build:${IMAGE_TAG}
 
 mkdir -p ${BUILD_DIR} ${OUT_DIR}
 
 #    --volume ${BUILD_DIR}:/mnt/build \
-docker run --rm \
+docker run --rm -it \
     --volume ${SRC_DIR}:/mnt/src \
     --volume ${OUT_DIR}:/mnt/out \
-    ${DEBUG_OPTS} \
-    iptv/nbs_build:2015-08-11 \
-    ${CMD}
+    ${IMAGE_NAME} \
+    /mnt/src/docker/scripts/make.sh
