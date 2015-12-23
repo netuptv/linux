@@ -295,7 +295,7 @@ int netup_ci_slot_reset(struct dvb_ca_en50221 *en50221, int slot)
 	ret = netup_write_i2c(state->i2c_adap, state->ci_i2c_addr,
 							0, &buf, 1);
 
-	msleep(1000);
+	msleep(3000);
 	dvb_ca_en50221_camready_irq(&state->ca, 0);
 
 	return 0;
