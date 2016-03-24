@@ -81,6 +81,12 @@ static int horus3a_write_regs(struct horus3a_priv *priv,
 		}
 	};
 
+	if (len + 1 > sizeof(buf)) {
+		dev_warn(&priv->i2c->dev,"wr reg=%04x: len=%d is too big!\n",
+			 reg, len + 1);
+		return -E2BIG;
+	}
+
 	horus3a_i2c_debug(priv, reg, 1, data, len);
 	buf[0] = reg;
 	memcpy(&buf[1], data, len);
@@ -284,8 +290,7 @@ static int horus3a_set_params(struct dvb_frontend *fe)
 		/* 5 <= fc_lpf <= 36 */
 		if (fc_lpf > 36)
 			fc_lpf = 36;
-		break;
-	case SYS_DVBS2:
+	} else if (p->delivery_system == SYS_DVBS2) {
 		/*
 		rolloff = 0.2
 		SR <= 4.5
@@ -301,11 +306,9 @@ static int horus3a_set_params(struct dvb_frontend *fe)
 		if (symbol_rate <= 4500)
 			fc_lpf = 5;
 		else if (symbol_rate <= 10000)
-			fc_lpf = (u8)((symbol_rate * 11 +
-				(10000-1)) / 10000);
+			fc_lpf = (u8)((symbol_rate * 11 + (10000-1)) / 10000);
 		else
-			fc_lpf = (u8)((symbol_rate * 3 +
-				(5000-1)) / 5000 + 5);
+			fc_lpf = (u8)((symbol_rate * 3 + (5000-1)) / 5000 + 5);
 		/* 5 <= fc_lpf <= 36 is valid */
 		if (fc_lpf > 36)
 			fc_lpf = 36;
