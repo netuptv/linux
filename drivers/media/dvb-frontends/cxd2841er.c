@@ -38,6 +38,8 @@ do { \
 		dev_dbg(&priv->i2c->dev, args); \
 } while (0)
 
+#define MAX_WRITE_REGSIZE   16
+
 enum cxd2841er_state {
 	STATE_SHUTDOWN = 0,
 	STATE_SLEEP_S,
@@ -1664,7 +1666,7 @@ static int cxd2841er_read_snr_i(struct cxd2841er_priv *priv, u32 *snr)
 	}
 	if (reg > 4996)
 		reg = 4996;
-	*snr = 100 * intlog10(reg) - 9031;
+	*snr = 100 * log10x100(reg) - 9031;
 	return 0;
 }
 
@@ -3422,7 +3424,6 @@ static struct  dvb_frontend_ops cxd2841er_isdbt_ops = {
 	.sleep = cxd2841er_sleep_tc,
 	.release = cxd2841er_release,
 	.set_frontend = cxd2841er_set_frontend_tc,
-	.get_frontend = cxd2841er_get_frontend,
 	.read_status = cxd2841er_read_status_tc,
 	.tune = cxd2841er_tune_tc,
 	.i2c_gate_ctrl = cxd2841er_i2c_gate_ctrl,

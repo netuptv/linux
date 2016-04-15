@@ -48,7 +48,7 @@ struct helene_config {
 	enum helene_xtal xtal;
 };
 
-#if IS_REACHABLE(CONFIG_DVB_HELENE)
+#if IS_ENABLED(CONFIG_DVB_HELENE)
 extern struct dvb_frontend *helene_attach(struct dvb_frontend *fe,
 					const struct helene_config *config,
 					struct i2c_adapter *i2c);
@@ -62,7 +62,7 @@ static inline struct dvb_frontend *helene_attach(struct dvb_frontend *fe,
 }
 #endif
 
-#if IS_REACHABLE(CONFIG_DVB_HELENE)
+#if IS_ENABLED(CONFIG_DVB_HELENE)
 extern struct dvb_frontend *helene_attach_s(struct dvb_frontend *fe,
 					const struct helene_config *config,
 					struct i2c_adapter *i2c);

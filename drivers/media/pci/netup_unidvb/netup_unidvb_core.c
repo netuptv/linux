@@ -314,7 +314,7 @@ static int netup_unidvb_dvb_init(
 {
 	int fe_count = 0;
 	int i = 0;
-	struct vb2_dvb_frontend *fes[4];
+	struct videobuf_dvb_frontend *fes[4];
 	u8 fe_name[32];
 
 	if (ndev->rev == NETUP_HW_REV_1_3) {
@@ -334,7 +334,7 @@ static int netup_unidvb_dvb_init(
 	INIT_LIST_HEAD(&ndev->frontends[num].felist);
 
 	for (i = 0; i < fe_count; i++) {
-		if (vb2_dvb_alloc_frontend(&ndev->frontends[num], i+1)
+		if (videobuf_dvb_alloc_frontend(&ndev->frontends[num], i+1)
 				== NULL) {
 			dev_err(&ndev->pci_dev->dev,
 					"%s(): unable to allocate vb2_dvb_frontend\n",
@@ -344,7 +344,7 @@ static int netup_unidvb_dvb_init(
 	}
 
 	for (i = 0; i < fe_count; i++) {
-		fes[i] = vb2_dvb_get_frontend(&ndev->frontends[num], i+1);
+		fes[i] = videobuf_dvb_get_frontend(&ndev->frontends[num], i+1);
 		if (fes[i] == NULL) {
 			dev_err(&ndev->pci_dev->dev,
 				"%s(): frontends has not been allocated\n",
@@ -354,7 +354,11 @@ static int netup_unidvb_dvb_init(
 	}
 
 	for (i = 0; i < fe_count; i++) {
-		netup_unidvb_queue_init(&ndev->dma[num], &fes[i]->dvb.dvbq);
+		videobuf_queue_vmalloc_init(&fes[i]->dvb.dvbq, &dvb_qops,
+                &ndev->pci_dev->dev, &ndev->dma[num].lock,
+                V4L2_BUF_TYPE_VIDEO_CAPTURE, V4L2_FIELD_TOP,
+                sizeof(struct netup_unidvb_buffer), &ndev->dma[num], NULL);
+		// netup_unidvb_queue_init(&ndev->dma[num], &fes[i]->dvb.dvbq);
 		snprintf(fe_name, sizeof(fe_name), "netup_fe%d", i);
 		fes[i]->dvb.name = fe_name;
 	}

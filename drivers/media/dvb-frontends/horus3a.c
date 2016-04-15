@@ -265,8 +265,7 @@ static int horus3a_set_params(struct dvb_frontend *fe)
 		g_ctl = 0x00;
 	}
 	/* LPF cutoff frequency setting */
-	switch (p->delivery_system) {
-	case SYS_DVBS:
+    if (p->delivery_system == SYS_DVBS) {
 		/*
 		rolloff = 0.35
 		SR <= 4.3
@@ -312,8 +311,7 @@ static int horus3a_set_params(struct dvb_frontend *fe)
 		/* 5 <= fc_lpf <= 36 is valid */
 		if (fc_lpf > 36)
 			fc_lpf = 36;
-		break;
-	default:
+    } else {
 		dev_err(&priv->i2c->dev,
 			"horus3a: invalid delivery system %d\n",
 			p->delivery_system);
