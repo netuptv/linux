@@ -12,7 +12,7 @@ obj-y        +=	ttpci/		\
 		ddbridge/	\
 		b2c2/		\
 		saa7146/	\
-		netup/
+		netup_unidvb/
 
 obj-$(CONFIG_VIDEO_IVTV) += ivtv/
 obj-$(CONFIG_VIDEO_ZORAN) += zoran/

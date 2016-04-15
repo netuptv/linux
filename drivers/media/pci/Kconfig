@@ -43,7 +43,7 @@ source "drivers/media/pci/pt1/Kconfig"
 source "drivers/media/pci/mantis/Kconfig"
 source "drivers/media/pci/ngene/Kconfig"
 source "drivers/media/pci/ddbridge/Kconfig"
-source "drivers/media/pci/netup/Kconfig"
+source "drivers/media/pci/netup_unidvb/Kconfig"
 endif
 
 endif #MEDIA_PCI_SUPPORT
