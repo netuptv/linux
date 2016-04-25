@@ -30,6 +30,8 @@
 #include "cxd2841er.h"
 #include "cxd2841er_priv.h"
 
+#define MAX_WRITE_REGSIZE 16
+
 static int debug;
 
 #define dprintk(args...) \
@@ -219,7 +221,7 @@ static int cxd2841er_write_regs(struct cxd2841er_priv *priv,
 		u8 addr, u8 reg, const u8 *data, u32 len)
 {
 	int ret;
-	u8 buf[len+1];
+	u8 buf[MAX_WRITE_REGSIZE+1];
 	u8 i2c_addr = (addr == I2C_SLVX ?
 		priv->i2c_addr_slvx : priv->i2c_addr_slvt);
 	struct i2c_msg msg[1] = {
