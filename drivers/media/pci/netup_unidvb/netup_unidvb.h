@@ -151,28 +151,6 @@ struct netup_dma {
 /* I2C bus section */
 #define NETUP_I2C_BUS0_ADDR		0x4800
 #define NETUP_I2C_BUS1_ADDR		0x4840
-#define NETUP_I2C_TIMEOUT		HZ
-
-struct netup_i2c_fifo_regs {
-	union {
-		u8	data8;
-		u16	data16;
-		u32	data32;
-	};
-	u8		padding[4];
-	u16		stat_ctrl;
-} __packed __aligned(1);
-
-struct netup_i2c_regs {
-	u16				clkdiv;
-	u16				twi_ctrl0_stat;
-	u16				twi_addr_ctrl1;
-	u16				length;
-	u8				padding1[8];
-	struct netup_i2c_fifo_regs	tx_fifo;
-	u8				padding2[6];
-	struct netup_i2c_fifo_regs	rx_fifo;
-} __packed __aligned(1);
 
 enum netup_i2c_state {
 	STATE_DONE,
@@ -181,6 +159,8 @@ enum netup_i2c_state {
 	STATE_WANT_WRITE,
 	STATE_ERROR
 };
+
+struct netup_i2c_regs;
 
 struct netup_i2c {
 	spinlock_t			lock;

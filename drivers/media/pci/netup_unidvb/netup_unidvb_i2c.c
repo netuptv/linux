@@ -24,15 +24,9 @@
 #include <linux/delay.h>
 #include "netup_unidvb.h"
 
-static int i2c_debug;
-module_param(i2c_debug, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-MODULE_PARM_DESC(i2c_debug, "Debug NetUP I2C (default:no)");
-
-#define dprintk(args...) \
-do { \
-	if (i2c_debug) \
-		dev_dbg(i2c->adap.dev.parent, args); \
-} while (0)
+#define NETUP_I2C_BUS0_ADDR		0x4800
+#define NETUP_I2C_BUS1_ADDR		0x4840
+#define NETUP_I2C_TIMEOUT		1000
 
 /* twi_ctrl0_stat reg bits */
 #define TWI_IRQEN_COMPL	0x1
@@ -53,8 +47,29 @@ do { \
 /* fifo_stat_ctrl reg bits */
 #define FIFO_IRQEN	0x8000
 #define FIFO_RESET	0x4000
-
+/* FIFO size */
 #define FIFO_SIZE	16
+
+struct netup_i2c_fifo_regs {
+	union {
+		__u8	data8;
+		__le16	data16;
+		__le32	data32;
+	};
+	__u8		padding[4];
+	__le16		stat_ctrl;
+} __packed __aligned(1);
+
+struct netup_i2c_regs {
+	__le16				clkdiv;
+	__le16				twi_ctrl0_stat;
+	__le16				twi_addr_ctrl1;
+	__le16				length;
+	__u8				padding1[8];
+	struct netup_i2c_fifo_regs	tx_fifo;
+	__u8				padding2[6];
+	struct netup_i2c_fifo_regs	rx_fifo;
+} __packed __aligned(1);
 
 irqreturn_t netup_i2c_interrupt(struct netup_i2c *i2c)
 {
@@ -65,19 +80,23 @@ irqreturn_t netup_i2c_interrupt(struct netup_i2c *i2c)
 	spin_lock_irqsave(&i2c->lock, flags);
 	reg = readw(&i2c->regs->twi_ctrl0_stat);
 	writew(reg & ~TWI_IRQEN, &i2c->regs->twi_ctrl0_stat);
-	dprintk("%s(): twi_ctrl0_state 0x%x\n", __func__, reg);
+	dev_dbg(i2c->adap.dev.parent,
+		"%s(): twi_ctrl0_state 0x%x\n", __func__, reg);
 	if ((reg & TWI_IRQEN_COMPL) != 0 && (reg & TWI_IRQ_COMPL)) {
-		dprintk("%s(): TWI_IRQEN_COMPL\n", __func__);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): TWI_IRQEN_COMPL\n", __func__);
 		i2c->state = STATE_DONE;
 		goto irq_ok;
 	}
 	if ((reg & TWI_IRQEN_ANACK) != 0 && (reg & TWI_IRQ_ANACK)) {
-		dprintk("%s(): TWI_IRQEN_ANACK\n", __func__);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): TWI_IRQEN_ANACK\n", __func__);
 		i2c->state = STATE_ERROR;
 		goto irq_ok;
 	}
 	if ((reg & TWI_IRQEN_DNACK) != 0 && (reg & TWI_IRQ_DNACK)) {
-		dprintk("%s(): TWI_IRQEN_DNACK\n", __func__);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): TWI_IRQEN_DNACK\n", __func__);
 		i2c->state = STATE_ERROR;
 		goto irq_ok;
 	}
@@ -85,14 +104,16 @@ irqreturn_t netup_i2c_interrupt(struct netup_i2c *i2c)
 		tmp = readw(&i2c->regs->rx_fifo.stat_ctrl);
 		writew(tmp & ~FIFO_IRQEN, &i2c->regs->rx_fifo.stat_ctrl);
 		i2c->state = STATE_WANT_READ;
-		dprintk("%s(): want read\n", __func__);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): want read\n", __func__);
 		goto irq_ok;
 	}
 	if ((reg & TWI_IRQ_TX) != 0) {
 		tmp = readw(&i2c->regs->tx_fifo.stat_ctrl);
 		writew(tmp & ~FIFO_IRQEN, &i2c->regs->tx_fifo.stat_ctrl);
 		i2c->state = STATE_WANT_WRITE;
-		dprintk("%s(): want write\n", __func__);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): want write\n", __func__);
 		goto irq_ok;
 	}
 	dev_warn(&i2c->adap.dev, "%s(): not mine interrupt\n", __func__);
@@ -106,7 +127,7 @@ irq_ok:
 
 static void netup_i2c_reset(struct netup_i2c *i2c)
 {
-	dprintk("%s()\n", __func__);
+	dev_dbg(i2c->adap.dev.parent, "%s()\n", __func__);
 	i2c->state = STATE_DONE;
 	writew(TWI_SOFT_RESET, &i2c->regs->twi_addr_ctrl1);
 	writew(TWI_CLKDIV, &i2c->regs->clkdiv);
@@ -127,10 +148,12 @@ static void netup_i2c_fifo_tx(struct netup_i2c *i2c)
 	while (msg_length--) {
 		data = i2c->msg->buf[i2c->xmit_size++];
 		writeb(data, &i2c->regs->tx_fifo.data8);
-		dprintk("%s(): write 0x%02x\n", __func__, data);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): write 0x%02x\n", __func__, data);
 	}
 	if (i2c->xmit_size < i2c->msg->len) {
-		dprintk("%s(): TX IRQ enabled\n", __func__);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): TX IRQ enabled\n", __func__);
 		writew(readw(&i2c->regs->tx_fifo.stat_ctrl) | FIFO_IRQEN,
 			&i2c->regs->tx_fifo.stat_ctrl);
 	}
@@ -141,17 +164,20 @@ static void netup_i2c_fifo_rx(struct netup_i2c *i2c)
 	u8 data;
 	u32 fifo_size = readw(&i2c->regs->rx_fifo.stat_ctrl) & 0x3f;
 
-	dprintk("%s(): RX fifo size %d\n", __func__, fifo_size);
+	dev_dbg(i2c->adap.dev.parent,
+		"%s(): RX fifo size %d\n", __func__, fifo_size);
 	while (fifo_size--) {
 		data = readb(&i2c->regs->rx_fifo.data8);
 		if ((i2c->msg->flags & I2C_M_RD) != 0 &&
 					i2c->xmit_size < i2c->msg->len) {
 			i2c->msg->buf[i2c->xmit_size++] = data;
-			dprintk("%s(): read 0x%02x\n", __func__, data);
+			dev_dbg(i2c->adap.dev.parent,
+				"%s(): read 0x%02x\n", __func__, data);
 		}
 	}
 	if (i2c->xmit_size < i2c->msg->len) {
-		dprintk("%s(): RX IRQ enabled\n", __func__);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): RX IRQ enabled\n", __func__);
 		writew(readw(&i2c->regs->rx_fifo.stat_ctrl) | FIFO_IRQEN,
 			&i2c->regs->rx_fifo.stat_ctrl);
 	}
@@ -166,9 +192,9 @@ static void netup_i2c_start_xfer(struct netup_i2c *i2c)
 	writew(i2c->msg->len, &i2c->regs->length);
 	writew(TWI_TRANSFER | (i2c->msg->addr << 1) | rdflag,
 		&i2c->regs->twi_addr_ctrl1);
-	dprintk("%s(): length %d twi_addr_ctrl1 0x%x twi_ctrl0_stat 0x%x\n",
-		__func__,
-		readw(&i2c->regs->length),
+	dev_dbg(i2c->adap.dev.parent,
+		"%s(): length %d twi_addr_ctrl1 0x%x twi_ctrl0_stat 0x%x\n",
+		__func__, readw(&i2c->regs->length),
 		readw(&i2c->regs->twi_addr_ctrl1),
 		readw(&i2c->regs->twi_ctrl0_stat));
 	i2c->state = STATE_WAIT;
@@ -180,8 +206,8 @@ static void netup_i2c_start_xfer(struct netup_i2c *i2c)
 			&i2c->regs->rx_fifo.stat_ctrl);
 }
 
-static int netup_i2c_xfer(
-	struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
+static int netup_i2c_xfer(struct i2c_adapter *adap,
+			  struct i2c_msg *msgs, int num)
 {
 	unsigned long flags;
 	int i, trans_done, res = num;
@@ -189,26 +215,27 @@ static int netup_i2c_xfer(
 	u16 reg;
 
 	if (num <= 0) {
-		dprintk("%s(): num == %d\n", __func__, num);
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): num == %d\n", __func__, num);
 		return -EINVAL;
 	}
 	spin_lock_irqsave(&i2c->lock, flags);
 	if (i2c->state != STATE_DONE) {
-		dprintk("%s(): i2c->state == %d, resetting I2C\n",
+		dev_dbg(i2c->adap.dev.parent,
+			"%s(): i2c->state == %d, resetting I2C\n",
 			__func__, i2c->state);
 		netup_i2c_reset(i2c);
 	}
-	dprintk("%s() num %d\n", __func__, num);
+	dev_dbg(i2c->adap.dev.parent, "%s() num %d\n", __func__, num);
 	for (i = 0; i < num; i++) {
 		i2c->msg = &msgs[i];
 		netup_i2c_start_xfer(i2c);
 		trans_done = 0;
 		while (!trans_done) {
 			spin_unlock_irqrestore(&i2c->lock, flags);
-			if (wait_event_timeout(
-					i2c->wq,
+			if (wait_event_timeout(i2c->wq,
 					i2c->state != STATE_WAIT,
-					NETUP_I2C_TIMEOUT)) {
+					msecs_to_jiffies(NETUP_I2C_TIMEOUT))) {
 				spin_lock_irqsave(&i2c->lock, flags);
 				switch (i2c->state) {
 				case STATE_WANT_READ:
@@ -221,17 +248,20 @@ static int netup_i2c_xfer(
 					if ((i2c->msg->flags & I2C_M_RD) != 0 &&
 						i2c->xmit_size != i2c->msg->len)
 						netup_i2c_fifo_rx(i2c);
-					dprintk("%s(): msg %d OK\n",
+					dev_dbg(i2c->adap.dev.parent,
+						"%s(): msg %d OK\n",
 						__func__, i);
 					trans_done = 1;
 					break;
 				case STATE_ERROR:
 					res = -EIO;
-					dprintk("%s(): error state\n",
+					dev_dbg(i2c->adap.dev.parent,
+						"%s(): error state\n",
 						__func__);
 					goto done;
 				default:
-					dprintk("%s(): invalid state %d\n",
+					dev_dbg(i2c->adap.dev.parent,
+						"%s(): invalid state %d\n",
 						__func__, i2c->state);
 					res = -EINVAL;
 					goto done;
@@ -246,15 +276,17 @@ static int netup_i2c_xfer(
 				spin_unlock_irqrestore(&i2c->lock, flags);
 			} else {
 				spin_lock_irqsave(&i2c->lock, flags);
-				dprintk("%s(): wait timeout\n", __func__);
+				dev_dbg(i2c->adap.dev.parent,
+					"%s(): wait timeout\n", __func__);
 				res = -ETIMEDOUT;
 				goto done;
 			}
 			spin_lock_irqsave(&i2c->lock, flags);
 		}
 	}
-done:	spin_unlock_irqrestore(&i2c->lock, flags);
-	dprintk("%s(): result %d\n", __func__, res);
+done:
+	spin_unlock_irqrestore(&i2c->lock, flags);
+	dev_dbg(i2c->adap.dev.parent, "%s(): result %d\n", __func__, res);
 	return res;
 }
 
@@ -320,7 +352,6 @@ static void netup_i2c_remove(struct netup_unidvb_dev *ndev, int bus_num)
 	}
 	i2c = &ndev->i2c[bus_num];
 	netup_i2c_reset(i2c);
-	msleep(20);
 	/* remove adapter */
 	i2c_del_adapter(&i2c->adap);
 	dev_info(&ndev->pci_dev->dev,
