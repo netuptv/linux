@@ -26,15 +26,6 @@
 #include "ascot2e.h"
 #include "dvb_frontend.h"
 
-static int debug;
-module_param(debug, int, 0644);
-
-#define dprintk(args...) \
-	do { \
-		if (debug) \
-			printk(args); \
-	} while (0)
-
 enum ascot2e_state {
 	STATE_UNKNOWN,
 	STATE_SLEEP,
@@ -116,24 +107,17 @@ static struct ascot2e_band_sett ascot2e_sett[] = {
 	  ASCOT2E_OFFSET(-2), ASCOT2E_OFFSET(2),  ASCOT2E_BW_8,  0x09, 0x00 }
 };
 
-static void ascot2e_i2c_debug(u8 reg, u8 write, const u8 *data, u32 len)
+static void ascot2e_i2c_debug(struct ascot2e_priv *priv,
+			      u8 reg, u8 write, const u8 *data, u32 len)
 {
-	u32 i;
-	u8 buf[128];
-	int offst = 0;
-
-	for (i = 0; i < len; i++) {
-		offst += snprintf(buf + offst, sizeof(buf) - offst, " %02x",
-			data[i]);
-		if (offst >= sizeof(buf) - 1)
-			break;
-	}
-	dprintk("ascot2e: I2C %s 0x%02x [%s ]\n",
-		(write == 0 ? "read" : "write"), reg, buf);
+	dev_dbg(&priv->i2c->dev, "ascot2e: I2C %s reg 0x%02x size %d\n",
+		(write == 0 ? "read" : "write"), reg, len);
+	print_hex_dump_bytes("ascot2e: I2C data: ",
+		DUMP_PREFIX_OFFSET, data, len);
 }
 
 static int ascot2e_write_regs(struct ascot2e_priv *priv,
-		u8 reg, const u8 *data, u32 len)
+			      u8 reg, const u8 *data, u32 len)
 {
 	int ret;
 	u8 buf[len+1];
@@ -146,30 +130,34 @@ static int ascot2e_write_regs(struct ascot2e_priv *priv,
 		}
 	};
 
-	ascot2e_i2c_debug(reg, 1, data, len);
+	if (len + 1 > sizeof(buf)) {
+		dev_warn(&priv->i2c->dev,"wr reg=%04x: len=%d is too big!\n",
+			 reg, len + 1);
+		return -E2BIG;
+	}
+
+	ascot2e_i2c_debug(priv, reg, 1, data, len);
 	buf[0] = reg;
 	memcpy(&buf[1], data, len);
-
 	ret = i2c_transfer(priv->i2c, msg, 1);
-	if (ret == 1) {
-		ret = 0;
-	} else {
+	if (ret >= 0 && ret != 1)
+		ret = -EREMOTEIO;
+	if (ret < 0) {
 		dev_warn(&priv->i2c->dev,
 			"%s: i2c wr failed=%d reg=%02x len=%d\n",
 			KBUILD_MODNAME, ret, reg, len);
-		ret = -EREMOTEIO;
+		return ret;
 	}
-	return ret;
+	return 0;
 }
 
-static int ascot2e_write_reg(
-		struct ascot2e_priv *priv, u8 reg, u8 val)
+static int ascot2e_write_reg(struct ascot2e_priv *priv, u8 reg, u8 val)
 {
 	return ascot2e_write_regs(priv, reg, &val, 1);
 }
 
-static int ascot2e_read_regs(
-		struct ascot2e_priv *priv, u8 reg, u8 *val, u32 len)
+static int ascot2e_read_regs(struct ascot2e_priv *priv,
+			     u8 reg, u8 *val, u32 len)
 {
 	int ret;
 	struct i2c_msg msg[2] = {
@@ -187,29 +175,34 @@ static int ascot2e_read_regs(
 	};
 
 	ret = i2c_transfer(priv->i2c, &msg[0], 1);
-	if (ret == 1) {
-		ret = i2c_transfer(priv->i2c, &msg[1], 1);
-		if (ret == 1) {
-			ret = 0;
-			ascot2e_i2c_debug(reg, 0, val, len);
-			goto rd_done;
-		}
-	}
-	dev_warn(&priv->i2c->dev, "%s: i2c rd failed=%d addr=%02x reg=%02x\n",
+	if (ret >= 0 && ret != 1)
+		ret = -EREMOTEIO;
+	if (ret < 0) {
+		dev_warn(&priv->i2c->dev,
+			"%s: I2C rw failed=%d addr=%02x reg=%02x\n",
 			KBUILD_MODNAME, ret, priv->i2c_address, reg);
-	ret = -EREMOTEIO;
-rd_done:
-	return ret;
+		return ret;
+	}
+	ret = i2c_transfer(priv->i2c, &msg[1], 1);
+	if (ret >= 0 && ret != 1)
+		ret = -EREMOTEIO;
+	if (ret < 0) {
+		dev_warn(&priv->i2c->dev,
+			"%s: i2c rd failed=%d addr=%02x reg=%02x\n",
+			KBUILD_MODNAME, ret, priv->i2c_address, reg);
+		return ret;
+	}
+	ascot2e_i2c_debug(priv, reg, 0, val, len);
+	return 0;
 }
 
-static int ascot2e_read_reg(
-		struct ascot2e_priv *priv, u8 reg, u8 *val)
+static int ascot2e_read_reg(struct ascot2e_priv *priv, u8 reg, u8 *val)
 {
 	return ascot2e_read_regs(priv, reg, val, 1);
 }
 
-static int ascot2e_set_reg_bits(
-		struct ascot2e_priv *priv, u8 reg, u8 data, u8 mask)
+static int ascot2e_set_reg_bits(struct ascot2e_priv *priv,
+				u8 reg, u8 data, u8 mask)
 {
 	int res;
 	u8 rdata;
@@ -217,19 +210,17 @@ static int ascot2e_set_reg_bits(
 	if (mask != 0xff) {
 		res = ascot2e_read_reg(priv, reg, &rdata);
 		if (res != 0)
-			goto done;
+			return res;
 		data = ((data & mask) | (rdata & (mask ^ 0xFF)));
 	}
-	res = ascot2e_write_reg(priv, reg, data);
-done:
-	return res;
+	return ascot2e_write_reg(priv, reg, data);
 }
 
 static int ascot2e_enter_power_save(struct ascot2e_priv *priv)
 {
 	u8 data[2];
 
-	dprintk("%s()\n", __func__);
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
 	if (priv->state == STATE_SLEEP)
 		return 0;
 	data[0] = 0x00;
@@ -244,7 +235,7 @@ static int ascot2e_leave_power_save(struct ascot2e_priv *priv)
 {
 	u8 data[2] = { 0xFB, 0x0F };
 
-	dprintk("%s()\n", __func__);
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
 	if (priv->state == STATE_ACTIVE)
 		return 0;
 	ascot2e_write_regs(priv, 0x14, data, 2);
@@ -257,14 +248,15 @@ static int ascot2e_init(struct dvb_frontend *fe)
 {
 	struct ascot2e_priv *priv = fe->tuner_priv;
 
-	dprintk("%s()\n", __func__);
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
 	return ascot2e_leave_power_save(priv);
 }
 
 static int ascot2e_release(struct dvb_frontend *fe)
 {
-	dprintk("%s()\n", __func__);
+	struct ascot2e_priv *priv = fe->tuner_priv;
 
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
 	kfree(fe->tuner_priv);
 	fe->tuner_priv = NULL;
 	return 0;
@@ -274,75 +266,75 @@ static int ascot2e_sleep(struct dvb_frontend *fe)
 {
 	struct ascot2e_priv *priv = fe->tuner_priv;
 
-	dprintk("%s()\n", __func__);
+	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
 	ascot2e_enter_power_save(priv);
 	return 0;
 }
 
-static enum ascot2e_tv_system_t ascot2e_get_tv_system(
-		u8 delsys, u32 bandwidth_hz)
+static enum ascot2e_tv_system_t ascot2e_get_tv_system(struct dvb_frontend *fe)
 {
 	enum ascot2e_tv_system_t system = ASCOT2E_DTV_UNKNOWN;
+	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
+	struct ascot2e_priv *priv = fe->tuner_priv;
 
-	if (delsys == SYS_DVBT) {
-		switch (bandwidth_hz) {
-		case 5000000:
+	if (p->delivery_system == SYS_DVBT) {
+		if (p->bandwidth_hz <= 5000000)
 			system = ASCOT2E_DTV_DVBT_5;
-			break;
-		case 6000000:
+		else if (p->bandwidth_hz <= 6000000)
 			system = ASCOT2E_DTV_DVBT_6;
-			break;
-		case 7000000:
+		else if (p->bandwidth_hz <= 7000000)
 			system = ASCOT2E_DTV_DVBT_7;
-			break;
-		case 8000000:
+		else if (p->bandwidth_hz <= 8000000)
 			system = ASCOT2E_DTV_DVBT_8;
-			break;
+		else {
+			system = ASCOT2E_DTV_DVBT_8;
+			p->bandwidth_hz = 8000000;
 		}
-	} else if (delsys == SYS_DVBT2) {
-		switch (bandwidth_hz) {
-		case 5000000:
+	} else if (p->delivery_system == SYS_DVBT2) {
+		if (p->bandwidth_hz <= 5000000)
 			system = ASCOT2E_DTV_DVBT2_5;
-			break;
-		case 6000000:
+		else if (p->bandwidth_hz <= 6000000)
 			system = ASCOT2E_DTV_DVBT2_6;
-			break;
-		case 7000000:
+		else if (p->bandwidth_hz <= 7000000)
 			system = ASCOT2E_DTV_DVBT2_7;
-			break;
-		case 8000000:
+		else if (p->bandwidth_hz <= 8000000)
 			system = ASCOT2E_DTV_DVBT2_8;
-			break;
+		else {
+			system = ASCOT2E_DTV_DVBT2_8;
+			p->bandwidth_hz = 8000000;
 		}
-	} else if (delsys == SYS_DVBC_ANNEX_A) {
-		/* only 8MHz bandwidth supported now */
-		system = ASCOT2E_DTV_DVBC_8;
+	} else if (p->delivery_system == SYS_DVBC_ANNEX_A) {
+		if (p->bandwidth_hz <= 6000000)
+			system = ASCOT2E_DTV_DVBC_6;
+		else if (p->bandwidth_hz <= 8000000)
+			system = ASCOT2E_DTV_DVBC_8;
 	}
-	dprintk("%s(): ASCOT2E DTV system %d (delsys %d, bandwidth %d)\n",
-		__func__, (int)system, delsys, bandwidth_hz);
+	dev_dbg(&priv->i2c->dev,
+		"%s(): ASCOT2E DTV system %d (delsys %d, bandwidth %d)\n",
+		__func__, (int)system, p->delivery_system, p->bandwidth_hz);
 	return system;
 }
 
 static int ascot2e_set_params(struct dvb_frontend *fe)
 {
 	u8 data[10];
+	u32 frequency;
 	enum ascot2e_tv_system_t tv_system;
 	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct ascot2e_priv *priv = fe->tuner_priv;
-	u32 frequency = p->frequency / 1000;
 
-	dprintk("%s(): tune frequency %dkHz\n", __func__, frequency);
-	tv_system = ascot2e_get_tv_system(
-		p->delivery_system, p->bandwidth_hz);
+	dev_dbg(&priv->i2c->dev, "%s(): tune frequency %dkHz\n",
+		__func__, p->frequency / 1000);
+	tv_system = ascot2e_get_tv_system(fe);
 
 	if (tv_system == ASCOT2E_DTV_UNKNOWN) {
-		dev_err(&priv->i2c->dev, "%s(): unknown DTV system\n",
+		dev_dbg(&priv->i2c->dev, "%s(): unknown DTV system\n",
 			__func__);
 		return -EINVAL;
 	}
 	if (priv->set_tuner)
 		priv->set_tuner(priv->set_tuner_data, 1);
-	frequency = ((frequency + 25/2) / 25) * 25;
+	frequency = roundup(p->frequency / 1000, 25);
 	if (priv->state == STATE_SLEEP)
 		ascot2e_leave_power_save(priv);
 
@@ -408,9 +400,11 @@ static int ascot2e_set_params(struct dvb_frontend *fe)
 	/* Set BW_OFFSET (0x0F) value from parameter table */
 	data[9] = ascot2e_sett[tv_system].bw_offset;
 	ascot2e_write_regs(priv, 0x06, data, 10);
-	/* 0x45 - 0x47
-	LNA optimization setting
-	RF_LNA_DIST1-5, RF_LNA_CM */
+	/*
+	 * 0x45 - 0x47
+	 * LNA optimization setting
+	 * RF_LNA_DIST1-5, RF_LNA_CM
+	 */
 	if (tv_system == ASCOT2E_DTV_DVBC_6 ||
 			tv_system == ASCOT2E_DTV_DVBC_8) {
 		data[0] = 0x0F;
@@ -428,10 +422,12 @@ static int ascot2e_set_params(struct dvb_frontend *fe)
 	/* Set IF_BPF_F0 value from parameter table */
 	data[1] = ascot2e_sett[tv_system].if_bpf_f0;
 	ascot2e_write_regs(priv, 0x49, data, 2);
-	/* Tune now
+	/*
+	 * Tune now
 	 * RFAGC fast mode / RFAGC auto control enable
 	 * (set bit[7], bit[5:4] only)
-	 * vco_cal = 1, set MIX_OL_CPU_EN */
+	 * vco_cal = 1, set MIX_OL_CPU_EN
+	 */
 	ascot2e_set_reg_bits(priv, 0x0c, 0x90, 0xb0);
 	/* Logic wake up, CPU wake up */
 	data[0] = 0xc4;
@@ -481,8 +477,8 @@ static struct dvb_tuner_ops ascot2e_tuner_ops = {
 };
 
 struct dvb_frontend *ascot2e_attach(struct dvb_frontend *fe,
-					const struct ascot2e_config *config,
-					struct i2c_adapter *i2c)
+				    const struct ascot2e_config *config,
+				    struct i2c_adapter *i2c)
 {
 	u8 data[4];
 	struct ascot2e_priv *priv = NULL;
@@ -515,9 +511,8 @@ struct dvb_frontend *ascot2e_attach(struct dvb_frontend *fe,
 	ascot2e_write_reg(priv, 0x28, 0x1e);
 	/* RSSI setting */
 	ascot2e_write_reg(priv, 0x59, 0x04);
-	msleep(80);
 	/* TODO check CPU HW error state here */
-
+	msleep(80);
 	/* Xtal oscillator current control setting */
 	ascot2e_write_reg(priv, 0x4c, 0x01);
 	/* XOSC_SEL=100uA */
