@@ -774,6 +774,7 @@ static int cxd2841er_shutdown_to_sleep_s(struct cxd2841er_priv *priv)
 
 static int cxd2841er_shutdown_to_sleep_tc(struct cxd2841er_priv *priv)
 {
+	u8 data;
 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
 	if (priv->state != STATE_SHUTDOWN) {
 		dev_dbg(&priv->i2c->dev, "%s(): invalid demod state %d\n",
@@ -789,9 +790,24 @@ static int cxd2841er_shutdown_to_sleep_tc(struct cxd2841er_priv *priv)
 	cxd2841er_write_reg(priv, I2C_SLVX, 0x00, 0x00);
 	/* Set demod SW reset */
 	cxd2841er_write_reg(priv, I2C_SLVX, 0x10, 0x01);
-	/* Set X'tal clock to 20.5Mhz */
+  /* Select ADC clock mode */
 	cxd2841er_write_reg(priv, I2C_SLVX, 0x13, 0x00);
-	cxd2841er_write_reg(priv, I2C_SLVX, 0x14, 0x00);
+
+	switch (priv->xtal) {
+		case SONY_XTAL_20500:
+			data = 0x0;
+			break;
+		case SONY_XTAL_24000:
+			/* Select demod frequency */
+			cxd2841er_write_reg(priv, I2C_SLVX, 0x12, 0x00);
+			data = 0x3;
+			break;
+		case SONY_XTAL_41000:
+			cxd2841er_write_reg(priv, I2C_SLVX, 0x12, 0x00);
+			data = 0x1;
+			break;
+	}
+	cxd2841er_write_reg(priv, I2C_SLVX, 0x14, data);
 	/* Clear demod SW reset */
 	cxd2841er_write_reg(priv, I2C_SLVX, 0x10, 0x00);
 	usleep_range(1000, 2000);
@@ -1741,15 +1757,15 @@ static int cxd2841er_dvbt2_set_profile(
 	switch (profile) {
 	case DVBT2_PROFILE_BASE:
 		tune_mode = 0x01;
-		seq_not2d_time = 12;
+		seq_not2d_time = (priv->xtal == SONY_XTAL_24000)?0x0E:0x0C; /* Set early unlock time */
 		break;
 	case DVBT2_PROFILE_LITE:
 		tune_mode = 0x05;
-		seq_not2d_time = 40;
+		seq_not2d_time = (priv->xtal == SONY_XTAL_24000)?0x2E:0x28; /* Set early unlock time */
 		break;
 	case DVBT2_PROFILE_ANY:
 		tune_mode = 0x00;
-		seq_not2d_time = 40;
+		seq_not2d_time = (priv->xtal == SONY_XTAL_24000)?0x2E:0x28; /* Set early unlock time */
 		break;
 	default:
 		return -EINVAL;
@@ -1791,160 +1807,84 @@ static int cxd2841er_sleep_tc_to_active_t2_band(struct cxd2841er_priv *priv,
 						u32 bandwidth)
 {
 	u32 iffreq;
-	u8 b20_9f[5];
-	u8 b10_a6[14];
-	u8 b10_b6[3];
-	u8 b10_d7;
+	u8 data[MAX_WRITE_REGSIZE];
 
-	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
-	switch (bandwidth) {
-	case 8000000:
-		/* bank 0x20, reg 0x9f */
-		b20_9f[0] = 0x11;
-		b20_9f[1] = 0xf0;
-		b20_9f[2] = 0x00;
-		b20_9f[3] = 0x00;
-		b20_9f[4] = 0x00;
-		/* bank 0x10, reg 0xa6 */
-		b10_a6[0] = 0x26;
-		b10_a6[1] = 0xaf;
-		b10_a6[2] = 0x06;
-		b10_a6[3] = 0xcd;
-		b10_a6[4] = 0x13;
-		b10_a6[5] = 0xbb;
-		b10_a6[6] = 0x28;
-		b10_a6[7] = 0xba;
-		b10_a6[8] = 0x23;
-		b10_a6[9] = 0xa9;
-		b10_a6[10] = 0x1f;
-		b10_a6[11] = 0xa8;
-		b10_a6[12] = 0x2c;
-		b10_a6[13] = 0xc8;
-		iffreq = MAKE_IFFREQ_CONFIG(4.80);
-		b10_d7 = 0x00;
-		break;
-	case 7000000:
-		/* bank 0x20, reg 0x9f */
-		b20_9f[0] = 0x14;
-		b20_9f[1] = 0x80;
-		b20_9f[2] = 0x00;
-		b20_9f[3] = 0x00;
-		b20_9f[4] = 0x00;
-		/* bank 0x10, reg 0xa6 */
-		b10_a6[0] = 0x2C;
-		b10_a6[1] = 0xBD;
-		b10_a6[2] = 0x02;
-		b10_a6[3] = 0xCF;
-		b10_a6[4] = 0x04;
-		b10_a6[5] = 0xF8;
-		b10_a6[6] = 0x23;
-		b10_a6[7] = 0xA6;
-		b10_a6[8] = 0x29;
-		b10_a6[9] = 0xB0;
-		b10_a6[10] = 0x26;
-		b10_a6[11] = 0xA9;
-		b10_a6[12] = 0x21;
-		b10_a6[13] = 0xA5;
-		iffreq = MAKE_IFFREQ_CONFIG(4.2);
-		b10_d7 = 0x02;
-		break;
-	case 6000000:
-		/* bank 0x20, reg 0x9f */
-		b20_9f[0] = 0x17;
-		b20_9f[1] = 0xEA;
-		b20_9f[2] = 0xAA;
-		b20_9f[3] = 0xAA;
-		b20_9f[4] = 0xAA;
-		/* bank 0x10, reg 0xa6 */
-		b10_a6[0] = 0x27;
-		b10_a6[1] = 0xA7;
-		b10_a6[2] = 0x28;
-		b10_a6[3] = 0xB3;
-		b10_a6[4] = 0x02;
-		b10_a6[5] = 0xF0;
-		b10_a6[6] = 0x01;
-		b10_a6[7] = 0xE8;
-		b10_a6[8] = 0x00;
-		b10_a6[9] = 0xCF;
-		b10_a6[10] = 0x00;
-		b10_a6[11] = 0xE6;
-		b10_a6[12] = 0x23;
-		b10_a6[13] = 0xA4;
-		iffreq = MAKE_IFFREQ_CONFIG(3.6);
-		b10_d7 = 0x04;
-		break;
-	case 5000000:
-		/* bank 0x20, reg 0x9f */
-		b20_9f[0] = 0x1C;
-		b20_9f[1] = 0xB3;
-		b20_9f[2] = 0x33;
-		b20_9f[3] = 0x33;
-		b20_9f[4] = 0x33;
-		/* bank 0x10, reg 0xa6 */
-		b10_a6[0] = 0x27;
-		b10_a6[1] = 0xA7;
-		b10_a6[2] = 0x28;
-		b10_a6[3] = 0xB3;
-		b10_a6[4] = 0x02;
-		b10_a6[5] = 0xF0;
-		b10_a6[6] = 0x01;
-		b10_a6[7] = 0xE8;
-		b10_a6[8] = 0x00;
-		b10_a6[9] = 0xCF;
-		b10_a6[10] = 0x00;
-		b10_a6[11] = 0xE6;
-		b10_a6[12] = 0x23;
-		b10_a6[13] = 0xA4;
-		iffreq = MAKE_IFFREQ_CONFIG(3.6);
-		b10_d7 = 0x06;
-		break;
-	case 1712000:
-		/* bank 0x20, reg 0x9f */
-		b20_9f[0] = 0x58;
-		b20_9f[1] = 0xE2;
-		b20_9f[2] = 0xAF;
-		b20_9f[3] = 0xE0;
-		b20_9f[4] = 0xBC;
-		/* bank 0x10, reg 0xa6 */
-		b10_a6[0] = 0x25;
-		b10_a6[1] = 0xA0;
-		b10_a6[2] = 0x36;
-		b10_a6[3] = 0x8D;
-		b10_a6[4] = 0x2E;
-		b10_a6[5] = 0x94;
-		b10_a6[6] = 0x28;
-		b10_a6[7] = 0x9B;
-		b10_a6[8] = 0x32;
-		b10_a6[9] = 0x90;
-		b10_a6[10] = 0x2C;
-		b10_a6[11] = 0x9D;
-		b10_a6[12] = 0x29;
-		b10_a6[13] = 0x99;
-		iffreq = MAKE_IFFREQ_CONFIG(3.5);
-		b10_d7 = 0x03;
-		break;
-	default:
-		return -EINVAL;
-	}
+	const uint8_t nominalRate8bw[3][5] = {
+		/* TRCG Nominal Rate [37:0] */
+		{0x11, 0xF0, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
+		{0x15, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
+		{0x11, 0xF0, 0x00, 0x00, 0x00}  /* 41MHz XTal */
+	};
+
+	const uint8_t nominalRate7bw[3][5] = {
+		/* TRCG Nominal Rate [37:0] */
+		{0x14, 0x80, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
+		{0x18, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
+		{0x14, 0x80, 0x00, 0x00, 0x00}  /* 41MHz XTal */
+	};
+
+
+	const uint8_t itbCoef8bw[3][14] = {
+		/*   COEF01 COEF02 COEF11 COEF12 COEF21 COEF22 COEF31 COEF32 COEF41 COEF42 COEF51 COEF52 COEF61 COEF62                 */
+		{0x26,  0xAF,  0x06,  0xCD,  0x13,  0xBB,  0x28,  0xBA,  0x23,  0xA9,  0x1F,  0xA8,  0x2C,  0xC8}, /* 20.5MHz XTal */
+		{0x2F,  0xBA,  0x28,  0x9B,  0x28,  0x9D,  0x28,  0xA1,  0x29,  0xA5,  0x2A,  0xAC,  0x29,  0xB5}, /* 24MHz XTal   */
+		{0x26,  0xAF,  0x06,  0xCD,  0x13,  0xBB,  0x28,  0xBA,  0x23,  0xA9,  0x1F,  0xA8,  0x2C,  0xC8}  /* 41MHz XTal   */
+	};
+
+	const uint8_t itbCoef7bw[3][14] = {
+		/*   COEF01 COEF02 COEF11 COEF12 COEF21 COEF22 COEF31 COEF32 COEF41 COEF42 COEF51 COEF52 COEF61 COEF62                 */
+		{0x2C,  0xBD,  0x02,  0xCF,  0x04,  0xF8,  0x23,  0xA6,  0x29,  0xB0,  0x26,  0xA9,  0x21,  0xA5}, /* 20.5MHz XTal */
+		{0x30,  0xB1,  0x29,  0x9A,  0x28,  0x9C,  0x28,  0xA0,  0x29,  0xA2,  0x2B,  0xA6,  0x2B,  0xAD}, /* 24MHz XTal   */
+		{0x2C,  0xBD,  0x02,  0xCF,  0x04,  0xF8,  0x23,  0xA6,  0x29,  0xB0,  0x26,  0xA9,  0x21,  0xA5}  /* 41MHz XTal   */
+	};
+
+
 	/* Set SLV-T Bank : 0x20 */
-	cxd2841er_write_reg(priv, I2C_SLVX, 0x00, 0x20);
-	cxd2841er_write_regs(priv, I2C_SLVT, 0x9f, b20_9f, sizeof(b20_9f));
-	/* Set SLV-T Bank : 0x27 */
-	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
-	cxd2841er_set_reg_bits(
-		priv, I2C_SLVT, 0x7a,
-		(bandwidth == 1712000 ? 0x03 : 0x00), 0x0f);
-	/* Set SLV-T Bank : 0x10 */
-	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
-	/* Group delay equaliser sett. for ASCOT2E */
-	cxd2841er_write_regs(priv, I2C_SLVT, 0xa6, b10_a6, sizeof(b10_a6));
-	/* <IF freq setting> */
-	b10_b6[0] = (u8) ((iffreq >> 16) & 0xff);
-	b10_b6[1] = (u8)((iffreq >> 8) & 0xff);
-	b10_b6[2] = (u8)(iffreq & 0xff);
-	cxd2841er_write_regs(priv, I2C_SLVT, 0xb6, b10_b6, sizeof(b10_b6));
-	/* System bandwidth setting */
-	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xd7, b10_d7, 0x07);
+	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x20);
+
+	switch (bandwidth) {
+		case 8000000:
+			/* <Timing Recovery setting> */
+			cxd2841er_write_regs(priv, I2C_SLVT,
+					0x9F, nominalRate8bw[priv->xtal], 5);
+
+			/* Set SLV-T Bank : 0x27 */
+			cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
+			cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x7a, 0x00, 0x0f);
+
+			/* Set SLV-T Bank : 0x10 */
+			cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
+
+			/* Group delay equaliser settings for
+			 * ASCOT2D, ASCOT2E and ASCOT3 tuners
+			 */
+			cxd2841er_write_regs(priv, I2C_SLVT,
+					0xA6, itbCoef8bw[priv->xtal], 14);
+			/* <IF freq setting> */
+			iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 4.80);
+			data[0] = (u8) ((iffreq >> 16) & 0xff);
+			data[1] = (u8)((iffreq >> 8) & 0xff);
+			data[2] = (u8)(iffreq & 0xff);
+			cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
+			/* System bandwidth setting */
+			cxd2841er_set_reg_bits(
+					priv, I2C_SLVT, 0xD7, 0x00, 0x07);
+			break;
+		case 7000000:
+			// TODO !
+			break;
+		case 6000000:
+			// TODO !
+			break;
+		case 5000000:
+			// TODO !
+			break;
+		case 1712000:
+			// TODO !
+			break;
+		default:
+			return -EINVAL;
+	}
 	return 0;
 }
 
@@ -2480,7 +2420,7 @@ static int cxd2841er_sleep_tc_to_active_t(struct cxd2841er_priv *priv,
 static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
 					   u32 bandwidth)
 {
-	u8 data[2] = { 0x09, 0x54 };
+	u8 data[MAX_WRITE_REGSIZE];
 
 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
 	cxd2841er_set_ts_clock_mode(priv, SYS_DVBT2);
@@ -2493,12 +2433,21 @@ static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
 	/* Enable demod clock */
 	cxd2841er_write_reg(priv, I2C_SLVT, 0x2c, 0x01);
 	/* Disable RF level monitor */
+	cxd2841er_write_reg(priv, I2C_SLVT, 0x59, 0x00);
 	cxd2841er_write_reg(priv, I2C_SLVT, 0x2f, 0x00);
 	/* Enable ADC clock */
 	cxd2841er_write_reg(priv, I2C_SLVT, 0x30, 0x00);
 	/* Enable ADC 1 */
 	cxd2841er_write_reg(priv, I2C_SLVT, 0x41, 0x1a);
-	/* xtal freq 20.5MHz */
+
+	if (priv->xtal == SONY_XTAL_41000) {
+		data[0] = 0x0A;
+		data[1] = 0xD4;
+	} else {
+		data[0] = 0x09;
+		data[1] = 0x54;
+	}
+
 	cxd2841er_write_regs(priv, I2C_SLVT, 0x43, data, 2);
 	/* Enable ADC 4 */
 	cxd2841er_write_reg(priv, I2C_SLVX, 0x18, 0x00);
@@ -2521,6 +2470,10 @@ static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
 	/* Set SLV-T Bank : 0x2b */
 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x2b);
 	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x76, 0x20, 0x70);
+	/* Set SLV-T Bank : 0x23 */
+	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x23);
+	/* L1 Control setting */
+	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xE6, 0x00, 0x03);
 	/* Set SLV-T Bank : 0x00 */
 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x00);
 	/* TSIF setting */
@@ -2538,6 +2491,72 @@ static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
 	/* Set SLV-T Bank : 0x2b */
 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x2b);
 	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x11, 0x20, 0x3f);
+
+	/* 24MHz Xtal setting */
+	if (priv->xtal == SONY_XTAL_24000) {
+		/* Set SLV-T Bank : 0x11 */
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x11);
+		data[0] = 0xEB;
+		data[1] = 0x03;
+		data[2] = 0x3B;
+		cxd2841er_write_regs(priv, I2C_SLVT, 0x33, data, 3);
+
+		/* Set SLV-T Bank : 0x20 */
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x20);
+		data[0] = 0x5E;
+		data[1] = 0x5E;
+		data[2] = 0x47;
+		cxd2841er_write_regs(priv, I2C_SLVT, 0x95, data, 3);
+
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x99, 0x18);
+
+		data[0] = 0x3F;
+		data[1] = 0xFF;
+		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
+
+		/* Set SLV-T Bank : 0x24 */
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x24);
+		data[0] = 0x0B;
+		data[1] = 0x72;
+		cxd2841er_write_regs(priv, I2C_SLVT, 0x34, data, 2);
+
+		data[0] = 0x93;
+		data[1] = 0xF3;
+		data[2] = 0x00;
+		cxd2841er_write_regs(priv, I2C_SLVT, 0xD2, data, 3);
+
+		data[0] = 0x05;
+		data[1] = 0xB8;
+		data[2] = 0xD8;
+		cxd2841er_write_regs(priv, I2C_SLVT, 0xDD, data, 3);
+
+		cxd2841er_write_reg(priv, I2C_SLVT, 0xE0, 0x00);
+
+		/* Set SLV-T Bank : 0x25 */
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x25);
+		cxd2841er_write_reg(priv, I2C_SLVT, 0xED, 0x60);
+
+		/* Set SLV-T Bank : 0x27 */
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
+		cxd2841er_write_reg(priv, I2C_SLVT, 0xFA, 0x34);
+
+		/* Set SLV-T Bank : 0x2B */
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x2B);
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x4B, 0x2F);
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x9E, 0x0E);
+
+		/* Set SLV-T Bank : 0x2D */
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x2D);
+		data[0] = 0x89;
+		data[1] = 0x89;
+		cxd2841er_write_regs(priv, I2C_SLVT, 0x24, data, 2);
+
+		/* Set SLV-T Bank : 0x5E */
+		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x5E);
+		data[0] = 0x24;
+		data[1] = 0x95;
+		cxd2841er_write_regs(priv, I2C_SLVT, 0x8C, data, 2);
+	}
 
 	cxd2841er_sleep_tc_to_active_t2_band(priv, bandwidth);
 
