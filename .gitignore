@@ -98,3 +98,6 @@ all.config
 
 # Temporary tar build files 
 /tar-install
+
+# Jenkins build directory
+/jenkins
