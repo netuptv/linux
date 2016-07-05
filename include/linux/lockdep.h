@@ -29,7 +29,7 @@ extern int lock_stat;
  */
 #define XXX_LOCK_USAGE_STATES		(1+3*4)
 
-#define MAX_LOCKDEP_SUBCLASSES		8UL
+#define MAX_LOCKDEP_SUBCLASSES		(8UL + 4)
 
 /*
  * NR_LOCKDEP_CACHING_CLASSES ... Number of classes
@@ -203,7 +203,7 @@ struct lock_chain {
 	u64				chain_key;
 };
 
-#define MAX_LOCKDEP_KEYS_BITS		13
+#define MAX_LOCKDEP_KEYS_BITS		(13 + 3)
 /*
  * Subtract one because we offset hlock->class_idx by 1 in order
  * to make 0 mean no class. This avoids overflowing the class_idx

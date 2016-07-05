@@ -844,6 +844,8 @@ unsigned int get_next_ino(void)
 	unsigned int *p = &get_cpu_var(last_ino);
 	unsigned int res = *p;
 
+start:
+
 #ifdef CONFIG_SMP
 	if (unlikely((res & (LAST_INO_BATCH-1)) == 0)) {
 		static atomic_t shared_last_ino;
@@ -856,7 +858,7 @@ unsigned int get_next_ino(void)
 	res++;
 	/* get_next_ino should not provide a 0 inode number */
 	if (unlikely(!res))
-		res++;
+		goto start;
 	*p = res;
 	put_cpu_var(last_ino);
 	return res;
@@ -1584,7 +1586,7 @@ EXPORT_SYMBOL(generic_update_time);
  * This does the actual work of updating an inodes time or version.  Must have
  * had called mnt_want_write() before calling this.
  */
-static int update_time(struct inode *inode, struct timespec *time, int flags)
+int update_time(struct inode *inode, struct timespec *time, int flags)
 {
 	int (*update_time)(struct inode *, struct timespec *, int);
 
@@ -1593,6 +1595,7 @@ static int update_time(struct inode *inode, struct timespec *time, int flags)
 
 	return update_time(inode, time, flags);
 }
+EXPORT_SYMBOL_GPL(update_time);
 
 /**
  *	touch_atime	-	update the access time
