@@ -2095,7 +2095,7 @@ CONFIG_RTL_CARDS=m
 # Enable WiMAX (Networking options) to see the WiMAX drivers
 #
 # CONFIG_WAN is not set
-# CONFIG_VMXNET3 is not set
+CONFIG_VMXNET3=m
 # CONFIG_FUJITSU_ES is not set
 CONFIG_HYPERV_NET=m
 # CONFIG_ISDN is not set
