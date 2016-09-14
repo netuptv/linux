@@ -96,6 +96,9 @@ static int netup_unidvb_ci_slot_reset(struct dvb_ca_en50221 *en50221,
 	u16 ci_stat = 0;
 	int reset_counter = 3;
 
+	/* Enable bypass on CAM reset: */
+	writew(BIT_CAM_BYPASS << shift, dev->bmmio0 + CAM_CTRLSTAT_READ_SET);
+
 	dev_dbg(&dev->pci_dev->dev, "%s(): CAM_CTRLSTAT_READ_SET=0x%x\n",
 		__func__, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
 reset:
@@ -245,4 +248,3 @@ void netup_unidvb_ci_unregister(struct netup_unidvb_dev *dev, int num)
 	state = &dev->ci[num];
 	dvb_ca_en50221_release(&state->ca);
 }
-
