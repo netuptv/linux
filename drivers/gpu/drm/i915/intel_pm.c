@@ -4416,7 +4416,7 @@ static void gen6_set_rps(struct drm_device *dev, u8 val)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
 	/* WaGsvDisableTurbo: Workaround to disable turbo on BXT A* */
-	if (IS_BROXTON(dev) && (INTEL_REVID(dev) < BXT_REVID_B0))
+	if (IS_BXT_REVID(dev, 0, BXT_REVID_A1))
 		return;
 
 	WARN_ON(!mutex_is_locked(&dev_priv->rps.hw_lock));
@@ -4503,6 +4503,7 @@ void gen6_rps_busy(struct drm_i915_private *dev_priv)
 {
 	mutex_lock(&dev_priv->rps.hw_lock);
 	if (dev_priv->rps.enabled) {
+		intel_set_rps(dev_priv->dev, dev_priv->rps.min_freq_softlimit);
 		if (dev_priv->pm_rps_events & (GEN6_PM_RP_DOWN_EI_EXPIRED | GEN6_PM_RP_UP_EI_EXPIRED))
 			gen6_rps_reset_ei(dev_priv);
 		I915_WRITE(GEN6_PMINTRMSK,
@@ -4637,6 +4638,9 @@ static int sanitize_rc6_option(const struct drm_device *dev, int enable_rc6)
 	if (INTEL_INFO(dev)->gen < 6)
 		return 0;
 
+	if (IS_SKYLAKE(dev))
+		return 0;
+
 	/* Respect the kernel parameter if it is set */
 	if (enable_rc6 >= 0) {
 		int mask;
@@ -4740,7 +4744,7 @@ static void gen9_enable_rps(struct drm_device *dev)
 	gen6_init_rps_frequencies(dev);
 
 	/* WaGsvDisableTurbo: Workaround to disable turbo on BXT A* */
-	if (IS_BROXTON(dev) && (INTEL_REVID(dev) < BXT_REVID_B0)) {
+	if (IS_BXT_REVID(dev, 0, BXT_REVID_A1)) {
 		intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
 		return;
 	}
@@ -4808,8 +4812,8 @@ static void gen9_enable_rc6(struct drm_device *dev)
 	DRM_INFO("RC6 %s\n", (rc6_mask & GEN6_RC_CTL_RC6_ENABLE) ?
 			"on" : "off");
 	/* WaRsUseTimeoutMode */
-	if ((IS_SKYLAKE(dev) && INTEL_REVID(dev) <= SKL_REVID_D0) ||
-	    (IS_BROXTON(dev) && INTEL_REVID(dev) <= BXT_REVID_A0)) {
+	if (IS_SKL_REVID(dev, 0, SKL_REVID_D0) ||
+	    IS_BXT_REVID(dev, 0, BXT_REVID_A0)) {
 		I915_WRITE(GEN6_RC6_THRESHOLD, 625); /* 800us */
 		I915_WRITE(GEN6_RC_CONTROL, GEN6_RC_CTL_HW_ENABLE |
 			   GEN7_RC_CTL_TO_MODE |
@@ -4825,8 +4829,9 @@ static void gen9_enable_rc6(struct drm_device *dev)
 	 * 3b: Enable Coarse Power Gating only when RC6 is enabled.
 	 * WaRsDisableCoarsePowerGating:skl,bxt - Render/Media PG need to be disabled with RC6.
 	 */
-	if ((IS_BROXTON(dev) && (INTEL_REVID(dev) < BXT_REVID_B0)) ||
-	    ((IS_SKL_GT3(dev) || IS_SKL_GT4(dev)) && (INTEL_REVID(dev) <= SKL_REVID_F0)))
+	if (IS_BXT_REVID(dev, 0, BXT_REVID_A1) ||
+	    ((IS_SKL_GT3(dev) || IS_SKL_GT4(dev)) &&
+	     IS_SKL_REVID(dev, 0, SKL_REVID_F0)))
 		I915_WRITE(GEN9_PG_ENABLE, 0);
 	else
 		I915_WRITE(GEN9_PG_ENABLE, (rc6_mask & GEN6_RC_CTL_RC6_ENABLE) ?
@@ -7295,11 +7300,11 @@ static void __intel_rps_boost_work(struct work_struct *work)
 	struct request_boost *boost = container_of(work, struct request_boost, work);
 	struct drm_i915_gem_request *req = boost->req;
 
-	if (!i915_gem_request_completed(req, true))
+	if (!i915_gem_request_completed(req))
 		gen6_rps_boost(to_i915(req->ring->dev), NULL,
 			       req->emitted_jiffies);
 
-	i915_gem_request_unreference__unlocked(req);
+	i915_gem_request_unreference(req);
 	kfree(boost);
 }
 
@@ -7311,7 +7316,7 @@ void intel_queue_rps_boost_for_request(struct drm_device *dev,
 	if (req == NULL || INTEL_INFO(dev)->gen < 6)
 		return;
 
-	if (i915_gem_request_completed(req, true))
+	if (i915_gem_request_completed(req))
 		return;
 
 	boost = kmalloc(sizeof(*boost), GFP_ATOMIC);
@@ -7323,6 +7328,18 @@ void intel_queue_rps_boost_for_request(struct drm_device *dev,
 
 	INIT_WORK(&boost->work, __intel_rps_boost_work);
 	queue_work(to_i915(dev)->wq, &boost->work);
+
+	if (req->ctx->flags & CONTEXT_BOOST_FREQ) {
+		atomic_set(&to_i915(dev)->rps.use_boost_freq, 1);
+		mod_timer(&to_i915(dev)->rps.boost_timeout,
+			  req->emitted_jiffies + DRM_I915_BOOST_TIMEOUT_JIFFIES);
+	}
+}
+
+static void intel_boost_timeout_handler(unsigned long data)
+{
+	atomic_t *use_boost_freq = (atomic_t *)data;
+	atomic_set(use_boost_freq, 0);
 }
 
 void intel_pm_setup(struct drm_device *dev)
@@ -7337,6 +7354,10 @@ void intel_pm_setup(struct drm_device *dev)
 	INIT_LIST_HEAD(&dev_priv->rps.clients);
 	INIT_LIST_HEAD(&dev_priv->rps.semaphores.link);
 	INIT_LIST_HEAD(&dev_priv->rps.mmioflips.link);
+	atomic_set(&dev_priv->rps.use_boost_freq, 0);
+	atomic_set(&dev_priv->rps.boost_ctx_count, 0);
+	setup_timer(&dev_priv->rps.boost_timeout, intel_boost_timeout_handler,
+			(unsigned long)&dev_priv->rps.use_boost_freq);
 
 	dev_priv->pm.suspended = false;
 }

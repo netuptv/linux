@@ -44,7 +44,6 @@ typedef uint64_t gen8_ppgtt_pml4e_t;
 
 #define gtt_total_entries(gtt) ((gtt).base.total >> PAGE_SHIFT)
 
-
 /* gen6-hsw has bit 11-4 for physical addr bit 39-32 */
 #define GEN6_GTT_ADDR_ENCODE(addr)	((addr) | (((addr) >> 28) & 0xff0))
 #define GEN6_PTE_ADDR_ENCODE(addr)	GEN6_GTT_ADDR_ENCODE(addr)
@@ -366,6 +365,7 @@ struct i915_gtt {
 struct i915_hw_ppgtt {
 	struct i915_address_space base;
 	struct kref ref;
+	unsigned int share_cnt;
 	struct drm_mm_node node;
 	unsigned long pd_dirty_rings;
 	union {
@@ -508,6 +508,18 @@ static inline uint32_t gen8_pml4e_index(uint64_t address)
 static inline size_t gen8_pte_count(uint64_t address, uint64_t length)
 {
 	return i915_pte_count(address, length, GEN8_PDE_SHIFT);
+}
+
+/* Used to convert any address to canonical form.
+ * Starting from gen8, some commands (e.g. STATE_BASE_ADDRESS,
+ * MI_LOAD_REGISTER_MEM and others, see Broadwell PRM Vol2a) require the
+ * addresses to be in a canonical form:
+ * "GraphicsAddress[63:48] are ignored by the HW and assumed to be in correct
+ * canonical form [63:48] == [47]."
+ */
+static inline uint64_t gen8_canonical_addr(uint64_t address)
+{
+	return ((int64_t)address << 16) >> 16;
 }
 
 static inline dma_addr_t

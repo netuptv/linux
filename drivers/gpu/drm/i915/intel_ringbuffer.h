@@ -93,6 +93,7 @@ struct intel_ring_hangcheck {
 	int score;
 	enum intel_ring_hangcheck_action action;
 	int deadlock;
+	u32 instdone[I915_NUM_INSTDONE_REG];
 };
 
 struct intel_ringbuffer {
@@ -100,6 +101,7 @@ struct intel_ringbuffer {
 	void __iomem *virtual_start;
 
 	struct intel_engine_cs *ring;
+	struct list_head link;
 
 	u32 head;
 	u32 tail;
@@ -157,6 +159,7 @@ struct  intel_engine_cs {
 	u32		mmio_base;
 	struct		drm_device *dev;
 	struct intel_ringbuffer *buffer;
+	struct list_head buffers;
 
 	/*
 	 * A pool of objects to use as shadow copies of client batch buffers
@@ -266,6 +269,8 @@ struct  intel_engine_cs {
 	struct list_head execlist_queue;
 	struct list_head execlist_retired_req_list;
 	u8 next_context_status_buffer;
+	bool disable_lite_restore_wa;
+	u32 ctx_desc_template;
 	u32             irq_keep_mask; /* bitmask for interrupts that should not be masked */
 	int		(*emit_request)(struct drm_i915_gem_request *request);
 	int		(*emit_flush)(struct drm_i915_gem_request *request,
@@ -299,9 +304,17 @@ struct  intel_engine_cs {
 	 */
 	u32 last_submitted_seqno;
 
+	/*
+	 * Deferred free list to allow unreferencing requests from interrupt
+	 * contexts and from outside of the i915 driver.
+	 */
+	struct list_head delayed_free_list;
+	spinlock_t delayed_free_lock;
+
 	bool gpu_caches_dirty;
 
-	wait_queue_head_t irq_queue;
+	spinlock_t request_wait_lock;
+	struct list_head request_wait_list;
 
 	struct intel_context *default_context;
 	struct intel_context *last_context;
@@ -346,6 +359,11 @@ struct  intel_engine_cs {
 	 * to encode the command length in the header).
 	 */
 	u32 (*get_cmd_length_mask)(u32 cmd_header);
+
+	spinlock_t fence_lock;
+	struct list_head fence_signal_list;
+	struct list_head fence_unsignal_list;
+	uint32_t last_irq_seqno;
 };
 
 bool intel_ring_initialized(struct intel_engine_cs *ring);
@@ -432,6 +450,7 @@ void intel_cleanup_ring_buffer(struct intel_engine_cs *ring);
 
 int intel_ring_alloc_request_extras(struct drm_i915_gem_request *request);
 
+int intel_ring_test_space(struct intel_ringbuffer *ringbuf, int min_space);
 int __must_check intel_ring_begin(struct drm_i915_gem_request *req, int n);
 int __must_check intel_ring_cacheline_align(struct drm_i915_gem_request *req);
 static inline void intel_ring_emit(struct intel_engine_cs *ring,
@@ -451,7 +470,9 @@ void intel_ring_update_space(struct intel_ringbuffer *ringbuf);
 int intel_ring_space(struct intel_ringbuffer *ringbuf);
 bool intel_ring_stopped(struct intel_engine_cs *ring);
 
-int __must_check intel_ring_idle(struct intel_engine_cs *ring);
+#define intel_ring_idle(ring)           __intel_ring_idle((ring), false)
+#define intel_ring_idle_flush(ring)     __intel_ring_idle((ring), true)
+int __must_check __intel_ring_idle(struct intel_engine_cs *ring, bool flush);
 void intel_ring_init_seqno(struct intel_engine_cs *ring, u32 seqno);
 int intel_ring_flush_all_caches(struct drm_i915_gem_request *req);
 int intel_ring_invalidate_all_caches(struct drm_i915_gem_request *req);

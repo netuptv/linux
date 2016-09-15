@@ -86,6 +86,11 @@ static void sync_timeline_put(struct sync_timeline *obj)
 
 void sync_timeline_destroy(struct sync_timeline *obj)
 {
+	if (!list_empty(&obj->active_list_head)) {
+		pr_info("destroying timeline with outstanding fences!\n");
+		sync_dump_timeline(obj);
+	}
+
 	obj->destroyed = true;
 	/*
 	 * Ensure timeline is marked as destroyed before
@@ -188,7 +193,7 @@ static void fence_check_cb_func(struct fence *f, struct fence_cb *cb)
 }
 
 /* TODO: implement a create which takes more that one sync_pt */
-struct sync_fence *sync_fence_create(const char *name, struct sync_pt *pt)
+struct sync_fence *sync_fence_create_dma(const char *name, struct fence *pt)
 {
 	struct sync_fence *fence;
 
@@ -199,15 +204,20 @@ struct sync_fence *sync_fence_create(const char *name, struct sync_pt *pt)
 	fence->num_fences = 1;
 	atomic_set(&fence->status, 1);
 
-	fence->cbs[0].sync_pt = &pt->base;
+	fence->cbs[0].sync_pt = pt;
 	fence->cbs[0].fence = fence;
-	if (fence_add_callback(&pt->base, &fence->cbs[0].cb,
-			       fence_check_cb_func))
+	if (fence_add_callback(pt, &fence->cbs[0].cb, fence_check_cb_func))
 		atomic_dec(&fence->status);
 
 	sync_fence_debug_add(fence);
 
 	return fence;
+}
+EXPORT_SYMBOL(sync_fence_create_dma);
+
+struct sync_fence *sync_fence_create(const char *name, struct sync_pt *pt)
+{
+	return sync_fence_create_dma(name, &pt->base);
 }
 EXPORT_SYMBOL(sync_fence_create);
 
@@ -392,7 +402,7 @@ int sync_fence_wait(struct sync_fence *fence, long timeout)
 		if (timeout) {
 			pr_info("fence timeout on [%p] after %dms\n", fence,
 				jiffies_to_msecs(timeout));
-			sync_dump();
+			sync_dump(fence);
 		}
 		return -ETIME;
 	}
@@ -400,7 +410,7 @@ int sync_fence_wait(struct sync_fence *fence, long timeout)
 	ret = atomic_read(&fence->status);
 	if (ret) {
 		pr_info("fence error %ld on [%p]\n", ret, fence);
-		sync_dump();
+		sync_dump(fence);
 	}
 	return ret;
 }
