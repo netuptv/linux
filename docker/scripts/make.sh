@@ -1,19 +1,21 @@
 #! /bin/bash
 
-set -ex
+set -e
 
-cd $(dirname ${0})/../..
+SRC_DIR=$(cd $(dirname ${0})/../..; pwd)
+BUILD_DIR=/mnt/build
+CCACHE_DIR=/mnt/ccache
+OUT_DIR=/mnt/out/
 
-TARGET_DIR=/mnt/out/
+export PATH=/usr/lib/ccache/:${PATH}
+export CCACHE_DIR
 
-mkdir -p ${TARGET_DIR}
+[ -f ${BUILD_DIR}/.config ] || cp ${SRC_DIR}/config.2.0 ${BUILD_DIR}/.config
 
-[ -f .config ] || cp config.2.0 .config
+cd ${SRC_DIR}
+make -j $(nproc) O=${BUILD_DIR} tar-pkg
 
-make -j $(nproc)
-make tar-pkg
+RELEASE=$(cat ${BUILD_DIR}/include/config/kernel.release)
+TAR_FILE=${BUILD_DIR}/linux-${RELEASE}-x86.tar
 
-RELEASE=$(cat include/config/kernel.release)
-TAR_FILE=linux-${RELEASE}-x86.tar
-
-mv ${TAR_FILE} ${TARGET_DIR}/linux-4.4.tar
+mv ${TAR_FILE} ${OUT_DIR}/linux-4.4.tar
