@@ -10,7 +10,7 @@ OUT_DIR=/mnt/out/
 export PATH=/usr/lib/ccache/:${PATH}
 export CCACHE_DIR
 
-[ -f ${BUILD_DIR}/.config ] || cp ${SRC_DIR}/config.2.0 ${BUILD_DIR}/.config
+cp ${SRC_DIR}/config.2.0 ${BUILD_DIR}/.config
 
 cd ${SRC_DIR}
 make -j $(nproc) O=${BUILD_DIR} tar-pkg
