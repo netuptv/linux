@@ -34,8 +34,14 @@
 #include "stv0900_priv.h"
 #include "stv0900_init.h"
 
-int stvdebug = 1;
+int stvdebug = 0;
+int mclk_g = 134000000; /* 134 Mhz by default */
+int ts_speed_g = 0;
+int ts_cfgm_g = 0;
 module_param_named(debug, stvdebug, int, 0644);
+module_param_named(mclk, mclk_g, int, 0644);
+module_param_named(ts_speed, ts_speed_g, int, 0644);
+module_param_named(ts_cfgm, ts_cfgm_g, int, 0644);
 
 /* internal params node */
 struct stv0900_inode {
@@ -1583,6 +1589,19 @@ static enum dvbfe_search stv0900_search(struct dvb_frontend *fe)
 	enum fe_stv0900_error error = STV0900_NO_ERROR;
 
 	dprintk("%s: ", __func__);
+
+        stv0900_set_mclk(intp, mclk_g);
+        msleep(3);
+
+        if(!ts_speed_g){
+                dprintk("%s: setting custom TSSPEED=0x%x", __func__, ts_speed_g);
+                stv0900_write_reg(intp, TSSPEED, ts_speed_g);
+        }
+
+        if(!ts_cfgm_g){
+                dprintk("%s: setting custom TSCFGM=0x%x", __func__, ts_cfgm_g);
+                stv0900_write_reg(intp, TSCFGM, ts_cfgm_g);
+        }
 
 	if (!(INRANGE(100000, c->symbol_rate, 70000000)))
 		return DVBFE_ALGO_SEARCH_FAILED;
