@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/x86 4.4.14 Kernel Configuration
+# Linux/x86 4.4.30 Kernel Configuration
 #
 CONFIG_64BIT=y
 CONFIG_X86_64=y
@@ -1556,7 +1556,7 @@ CONFIG_SCSI_LPFC_DEBUG_FS=y
 CONFIG_SCSI_PMCRAID=y
 CONFIG_SCSI_PM8001=y
 CONFIG_SCSI_BFA_FC=y
-# CONFIG_SCSI_VIRTIO is not set
+CONFIG_SCSI_VIRTIO=m
 # CONFIG_SCSI_CHELSIO_FCOE is not set
 CONFIG_SCSI_DH=y
 # CONFIG_SCSI_DH_RDAC is not set
