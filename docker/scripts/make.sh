@@ -19,3 +19,6 @@ RELEASE=$(cat ${BUILD_DIR}/include/config/kernel.release)
 TAR_FILE=${BUILD_DIR}/linux-${RELEASE}-x86.tar
 
 mv ${TAR_FILE} ${OUT_DIR}/linux-4.4.tar
+
+make tools/perf O=${BUILD_DIR}
+cp ${BUILD_DIR}/tools/perf/perf ${OUT_DIR}/
