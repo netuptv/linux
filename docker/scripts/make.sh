@@ -19,3 +19,10 @@ RELEASE=$(cat ${BUILD_DIR}/include/config/kernel.release)
 TAR_FILE=${BUILD_DIR}/linux-${RELEASE}-x86.tar
 
 mv ${TAR_FILE} ${OUT_DIR}/linux-3.14.tar
+
+PERF_BUILD_DIR=${BUILD_DIR}/tools/perf/
+TRACEEVENT_DIR=mnt/src/tools/lib/traceevent/
+mkdir -p ${PERF_BUILD_DIR}/${TRACEEVENT_DIR}
+ln -sf ${TRACEEVENT_DIR}/libtraceevent.a ${PERF_BUILD_DIR}/
+make tools/perf O=${BUILD_DIR}
+cp ${BUILD_DIR}/tools/perf/perf ${OUT_DIR}/
