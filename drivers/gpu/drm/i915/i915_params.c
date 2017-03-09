@@ -56,6 +56,7 @@ struct i915_params i915 __read_mostly = {
 	.enable_guc_submission = false,
 	.guc_log_level = -1,
 	.enable_scheduler = 1,
+	.ring_multiplier = 2,
 };
 
 module_param_named(modeset, i915.modeset, int, 0400);
@@ -200,3 +201,6 @@ MODULE_PARM_DESC(guc_log_level,
 
 module_param_named_unsafe(enable_scheduler, i915.enable_scheduler, int, 0600);
 MODULE_PARM_DESC(enable_scheduler, "Enable scheduler (0 = disable, 1 = enable [default])");
+
+module_param_named(ring_multiplier, i915.ring_multiplier, int, 0400);
+MODULE_PARM_DESC(ring_multiplier, "Configure Ring/GT multiplier for SKL. (2:multiplier is 2 (default), 3:multiplier is 3)");

@@ -2808,6 +2808,7 @@ struct i915_params {
 	bool nuclear_pageflip;
 	int edp_vswing;
 	int enable_scheduler;
+	int ring_multiplier;
 };
 extern struct i915_params i915 __read_mostly;
 

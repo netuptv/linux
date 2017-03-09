@@ -5038,6 +5038,14 @@ static void gen6_enable_rps(struct drm_device *dev)
 	intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
 }
 
+static int sanitize_ring_multiplier(struct drm_device *dev, int ring_multiplier)
+{
+	if (ring_multiplier != 2 && ring_multiplier != 3)
+		return 2;
+
+	return ring_multiplier;
+}
+
 static void __gen6_update_ring_freq(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -5073,6 +5081,9 @@ static void __gen6_update_ring_freq(struct drm_device *dev)
 		/* Convert GT frequency to 50 HZ units */
 		min_gpu_freq = dev_priv->rps.min_freq / GEN9_FREQ_SCALER;
 		max_gpu_freq = dev_priv->rps.max_freq / GEN9_FREQ_SCALER;
+
+		i915.ring_multiplier = sanitize_ring_multiplier(dev, i915.ring_multiplier);
+		DRM_INFO("The Ring/GT multiplier is %d\n", i915.ring_multiplier);
 	} else {
 		min_gpu_freq = dev_priv->rps.min_freq;
 		max_gpu_freq = dev_priv->rps.max_freq;
@@ -5089,10 +5100,15 @@ static void __gen6_update_ring_freq(struct drm_device *dev)
 
 		if (IS_SKYLAKE(dev)) {
 			/*
-			 * ring_freq = 2 * GT. ring_freq is in 100MHz units
+			 * Only 2 or 3 is allowed for the multiplier.
+			 * gpu_freq is in 50MHz units.
+			 * ring_freq is in 100MHz units.
 			 * No floor required for ring frequency on SKL.
 			 */
-			ring_freq = gpu_freq;
+			if (i915.ring_multiplier == 3)
+				ring_freq = mult_frac(gpu_freq, 3, 2);
+			else
+				ring_freq = gpu_freq;
 		} else if (INTEL_INFO(dev)->gen >= 8) {
 			/* max(2 * GT, DDR). NB: GT is 50MHz units */
 			ring_freq = max(min_ring_freq, gpu_freq);
@@ -5114,6 +5130,9 @@ static void __gen6_update_ring_freq(struct drm_device *dev)
 				ia_freq = max_ia_freq - ((diff * scaling_factor) / 2);
 			ia_freq = DIV_ROUND_CLOSEST(ia_freq, 100);
 		}
+
+		DRM_DEBUG_DRIVER("gpu_freq=%d*50=%d ring_freq=%d*100=%d\n",
+			gpu_freq, gpu_freq * 50, ring_freq, ring_freq * 100);
 
 		sandybridge_pcode_write(dev_priv,
 					GEN6_PCODE_WRITE_MIN_FREQ_TABLE,

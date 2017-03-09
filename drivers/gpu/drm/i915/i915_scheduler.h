@@ -125,10 +125,19 @@ struct i915_scheduler_stats {
 	uint32_t fence_got;
 };
 
+struct i915_scheduler_node_states {
+	uint32_t flying;
+	uint32_t queued;
+};
+
 struct i915_scheduler {
 	struct list_head node_queue[I915_NUM_RINGS];
+	struct list_head completed_queue;
 	uint32_t flags[I915_NUM_RINGS];
 	spinlock_t lock;
+
+	/* Node counts: */
+	struct i915_scheduler_node_states counts[I915_NUM_RINGS];
 
 	/* Tuning parameters: */
 	int32_t priority_level_min;
