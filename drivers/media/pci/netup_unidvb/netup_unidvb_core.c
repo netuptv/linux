@@ -50,7 +50,7 @@ static int debug;
 module_param(debug, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 static int spi_enable;
 module_param(spi_enable, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-static int hw_filter;
+static int hw_filter = 1;
 module_param(hw_filter, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
 #define dprintk(args...) \
@@ -800,7 +800,10 @@ static void netup_unidvb_pf_init(struct netup_unidvb_dev *ndev, int nr)
         pf = &ndev->pf[nr];
         pf->pid_map = ndev->bmmio0 +
                 (nr == 0 ? NETUP_PF0_ADDR : NETUP_PF1_ADDR);
-        netup_unidvb_pf_clear(ndev, nr, 0); // enable all pids by default
+        if(hw_filter)
+            netup_unidvb_pf_clear(ndev, nr, 1);
+        else
+            netup_unidvb_pf_clear(ndev, nr, 0); // enable all pids by default
         fe = videobuf_dvb_get_frontend(&ndev->frontends[nr], 1);
         if (fe) {
                 demux = &fe->dvb.demux;
