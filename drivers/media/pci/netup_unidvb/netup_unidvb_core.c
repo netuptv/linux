@@ -803,7 +803,7 @@ static void netup_unidvb_pf_init(struct netup_unidvb_dev *ndev, int nr)
         if(hw_filter)
             netup_unidvb_pf_clear(ndev, nr, 1);
         else
-            netup_unidvb_pf_clear(ndev, nr, 0); // enable all pids by default
+            netup_unidvb_pf_clear(ndev, nr, 0); // enable all pids
         fe = videobuf_dvb_get_frontend(&ndev->frontends[nr], 1);
         if (fe) {
                 demux = &fe->dvb.demux;
