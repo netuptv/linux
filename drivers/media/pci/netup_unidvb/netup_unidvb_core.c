@@ -50,7 +50,7 @@ static int debug;
 module_param(debug, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 static int spi_enable;
 module_param(spi_enable, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-static int hw_filter = 1;
+static int hw_filter;
 module_param(hw_filter, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
 #define dprintk(args...) \
