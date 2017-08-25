@@ -77,7 +77,7 @@ node {
         stage ("Save artifacts") {
             def archive_dir = currentBuild.rawBuild.pickArtifactManager().root().toURI().path
             sh "mkdir ${archive_dir}"
-            sh "tar cf - jenkins/out/${JOB_BASE_NAME} | tar xf - -C ${archive_dir}"
+            sh "tar cf - jenkins/out/linux-* | tar xf - -C ${archive_dir}"
         }
     }
 }
