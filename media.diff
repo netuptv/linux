@@ -1,0 +1,3395 @@
+diff --git a/drivers/media/dvb-core/dvb_ca_en50221.c b/drivers/media/dvb-core/dvb_ca_en50221.c
+index fb66184..e610eb3 100644
+--- a/drivers/media/dvb-core/dvb_ca_en50221.c
++++ b/drivers/media/dvb-core/dvb_ca_en50221.c
+@@ -315,7 +315,7 @@ static int dvb_ca_en50221_link_init(struct dvb_ca_private *ca, int slot)
+ 	/* read the buffer size from the CAM */
+ 	if ((ret = ca->pub->write_cam_control(ca->pub, slot, CTRLIF_COMMAND, IRQEN | CMDREG_SR)) != 0)
+ 		return ret;
+-	if ((ret = dvb_ca_en50221_wait_if_status(ca, slot, STATUSREG_DA, HZ / 10)) != 0)
++	if ((ret = dvb_ca_en50221_wait_if_status(ca, slot, STATUSREG_DA, HZ )) != 0)
+ 		return ret;
+ 	if ((ret = dvb_ca_en50221_read_data(ca, slot, buf, 2)) != 2)
+ 		return -EIO;
+diff --git a/drivers/media/dvb-frontends/Kconfig b/drivers/media/dvb-frontends/Kconfig
+index 310e4b8..b63893c 100644
+--- a/drivers/media/dvb-frontends/Kconfig
++++ b/drivers/media/dvb-frontends/Kconfig
+@@ -845,6 +845,13 @@ config DVB_ASCOT2E
+ 	help
+ 	  Say Y when you want to support this frontend.
+ 
++config DVB_HELENE
++	tristate "Sony HELENE Sat/Ter tuner (CXD2858ER)"
++	depends on DVB_CORE && I2C
++	default m if !MEDIA_SUBDRV_AUTOSELECT
++	help
++	Say Y when you want to support this frontend.
++
+ comment "Tools to develop new frontends"
+ 
+ config DVB_DUMMY_FE
+diff --git a/drivers/media/dvb-frontends/Makefile b/drivers/media/dvb-frontends/Makefile
+index 37ef17b..2c123a8 100644
+--- a/drivers/media/dvb-frontends/Makefile
++++ b/drivers/media/dvb-frontends/Makefile
+@@ -122,3 +122,4 @@ obj-$(CONFIG_DVB_AS102_FE) += as102_fe.o
+ obj-$(CONFIG_DVB_TC90522) += tc90522.o
+ obj-$(CONFIG_DVB_HORUS3A) += horus3a.o
+ obj-$(CONFIG_DVB_ASCOT2E) += ascot2e.o
++obj-$(CONFIG_DVB_HELENE) += helene.o
+diff --git a/drivers/media/dvb-frontends/ascot2e.c b/drivers/media/dvb-frontends/ascot2e.c
+index f770f6a..8cc8c45 100644
+--- a/drivers/media/dvb-frontends/ascot2e.c
++++ b/drivers/media/dvb-frontends/ascot2e.c
+@@ -132,7 +132,7 @@ static int ascot2e_write_regs(struct ascot2e_priv *priv,
+ 		}
+ 	};
+ 
+-	if (len + 1 >= sizeof(buf)) {
++	if (len + 1 > sizeof(buf)) {
+ 		dev_warn(&priv->i2c->dev,"wr reg=%04x: len=%d is too big!\n",
+ 			 reg, len + 1);
+ 		return -E2BIG;
+diff --git a/drivers/media/dvb-frontends/cxd2841er.c b/drivers/media/dvb-frontends/cxd2841er.c
+index fdffb2f..ea91fd8 100644
+--- a/drivers/media/dvb-frontends/cxd2841er.c
++++ b/drivers/media/dvb-frontends/cxd2841er.c
+@@ -1,7 +1,9 @@
+ /*
+  * cxd2841er.c
+  *
+- * Sony CXD2441ER digital demodulator driver
++ * Sony digital demodulator driver for
++ *	CXD2441ER - DVB-S/S2/T/T2/C/C2
++ *	CXD2454ER - DVB-S/S2/T/T2/C/C2, ISDB-T/S
+  *
+  * Copyright 2012 Sony Corporation
+  * Copyright (C) 2014 NetUP Inc.
+@@ -51,6 +53,7 @@ struct cxd2841er_priv {
+ 	const struct cxd2841er_config	*config;
+ 	enum cxd2841er_state		state;
+ 	u8				system;
++	enum cxd2841er_xtal		xtal;
+ };
+ 
+ static const struct cxd2841er_cnr_data s_cn_data[] = {
+@@ -188,6 +191,9 @@ static const struct cxd2841er_cnr_data s2_cn_data[] = {
+ };
+ 
+ #define MAKE_IFFREQ_CONFIG(iffreq) ((u32)(((iffreq)/41.0)*16777216.0 + 0.5))
++#define MAKE_IFFREQ_CONFIG_XTAL(xtal, iffreq) ((xtal == SONY_XTAL_24000) ? \
++		(u32)(((iffreq)/48.0)*16777216.0 + 0.5) : \
++		(u32)(((iffreq)/41.0)*16777216.0 + 0.5))
+ 
+ static void cxd2841er_i2c_debug(struct cxd2841er_priv *priv,
+ 				u8 addr, u8 reg, u8 write,
+@@ -217,7 +223,7 @@ static int cxd2841er_write_regs(struct cxd2841er_priv *priv,
+ 	};
+ 
+ 	if (len + 1 >= sizeof(buf)) {
+-		dev_warn(&priv->i2c->dev,"wr reg=%04x: len=%d is too big!\n",
++		dev_warn(&priv->i2c->dev, "wr reg=%04x: len=%d is too big!\n",
+ 			 reg, len + 1);
+ 		return -E2BIG;
+ 	}
+@@ -282,6 +288,7 @@ static int cxd2841er_read_regs(struct cxd2841er_priv *priv,
+ 			KBUILD_MODNAME, ret, i2c_addr, reg);
+ 		return ret;
+ 	}
++	cxd2841er_i2c_debug(priv, i2c_addr, reg, 0, val, len);
+ 	return 0;
+ }
+ 
+@@ -669,6 +676,45 @@ static int cxd2841er_active_c_to_sleep_tc(struct cxd2841er_priv *priv)
+ 	return 0;
+ }
+ 
++static int cxd2841er_active_i_to_sleep_tc(struct cxd2841er_priv *priv)
++{
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	if (priv->state != STATE_ACTIVE_TC) {
++		dev_err(&priv->i2c->dev, "%s(): invalid state %d\n",
++				__func__, priv->state);
++		return -EINVAL;
++	}
++	/* Set SLV-T Bank : 0x00 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x00);
++	/* disable TS output */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0xc3, 0x01);
++	/* enable Hi-Z setting 1 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x80, 0x3f);
++	/* enable Hi-Z setting 2 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x81, 0xff);
++
++	/* TODO: Cancel demod parameter */
++
++	/* Set SLV-X Bank : 0x00 */
++	cxd2841er_write_reg(priv, I2C_SLVX, 0x00, 0x00);
++	/* disable ADC 1 */
++	cxd2841er_write_reg(priv, I2C_SLVX, 0x18, 0x01);
++	/* Set SLV-T Bank : 0x00 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x00);
++	/* Disable ADC 2 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x43, 0x0a);
++	/* Disable ADC 3 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x41, 0x0a);
++	/* Disable ADC clock */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x30, 0x00);
++	/* Disable RF level monitor */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x2f, 0x00);
++	/* Disable demod clock */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x2c, 0x00);
++	priv->state = STATE_SLEEP_TC;
++	return 0;
++}
++
+ static int cxd2841er_shutdown_to_sleep_s(struct cxd2841er_priv *priv)
+ {
+ 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+@@ -686,8 +732,25 @@ static int cxd2841er_shutdown_to_sleep_s(struct cxd2841er_priv *priv)
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x00, 0x00);
+ 	/* Set demod SW reset */
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x10, 0x01);
+-	/* Set X'tal clock to 20.5Mhz */
+-	cxd2841er_write_reg(priv, I2C_SLVX, 0x14, 0x00);
++
++	switch (priv->xtal) {
++	case SONY_XTAL_20500:
++		cxd2841er_write_reg(priv, I2C_SLVX, 0x14, 0x00);
++		break;
++	case SONY_XTAL_24000:
++		/* Select demod frequency */
++		cxd2841er_write_reg(priv, I2C_SLVX, 0x12, 0x00);
++		cxd2841er_write_reg(priv, I2C_SLVX, 0x14, 0x03);
++		break;
++	case SONY_XTAL_41000:
++		cxd2841er_write_reg(priv, I2C_SLVX, 0x14, 0x01);
++		break;
++	default:
++		dev_dbg(&priv->i2c->dev, "%s(): invalid demod xtal %d\n",
++				__func__, priv->xtal);
++		return -EINVAL;
++	}
++
+ 	/* Set demod mode */
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x17, 0x0a);
+ 	/* Clear demod SW reset */
+@@ -712,6 +775,7 @@ static int cxd2841er_shutdown_to_sleep_s(struct cxd2841er_priv *priv)
+ 
+ static int cxd2841er_shutdown_to_sleep_tc(struct cxd2841er_priv *priv)
+ {
++	u8 data = 0;
+ 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+ 	if (priv->state != STATE_SHUTDOWN) {
+ 		dev_dbg(&priv->i2c->dev, "%s(): invalid demod state %d\n",
+@@ -727,9 +791,24 @@ static int cxd2841er_shutdown_to_sleep_tc(struct cxd2841er_priv *priv)
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x00, 0x00);
+ 	/* Set demod SW reset */
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x10, 0x01);
+-	/* Set X'tal clock to 20.5Mhz */
++  /* Select ADC clock mode */
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x13, 0x00);
+-	cxd2841er_write_reg(priv, I2C_SLVX, 0x14, 0x00);
++
++	switch (priv->xtal) {
++	case SONY_XTAL_20500:
++		data = 0x0;
++		break;
++	case SONY_XTAL_24000:
++		/* Select demod frequency */
++		cxd2841er_write_reg(priv, I2C_SLVX, 0x12, 0x00);
++		data = 0x3;
++		break;
++	case SONY_XTAL_41000:
++		cxd2841er_write_reg(priv, I2C_SLVX, 0x12, 0x00);
++		data = 0x1;
++		break;
++	}
++	cxd2841er_write_reg(priv, I2C_SLVX, 0x14, data);
+ 	/* Clear demod SW reset */
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x10, 0x00);
+ 	usleep_range(1000, 2000);
+@@ -809,11 +888,14 @@ static void cxd2841er_set_ts_clock_mode(struct cxd2841er_priv *priv,
+ 
+ static u8 cxd2841er_chip_id(struct cxd2841er_priv *priv)
+ {
+-	u8 chip_id;
++	u8 chip_id = 0;
+ 
+ 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+-	cxd2841er_write_reg(priv, I2C_SLVT, 0, 0);
+-	cxd2841er_read_reg(priv, I2C_SLVT, 0xfd, &chip_id);
++	if (cxd2841er_write_reg(priv, I2C_SLVT, 0, 0) == 0)
++		cxd2841er_read_reg(priv, I2C_SLVT, 0xfd, &chip_id);
++	else if (cxd2841er_write_reg(priv, I2C_SLVX, 0, 0) == 0)
++		cxd2841er_read_reg(priv, I2C_SLVX, 0xfd, &chip_id);
++
+ 	return chip_id;
+ }
+ 
+@@ -896,6 +978,25 @@ static int cxd2841er_read_status_c(struct cxd2841er_priv *priv, u8 *tslock)
+ 	return 0;
+ }
+ 
++static int cxd2841er_read_status_i(struct cxd2841er_priv *priv,
++		u8 *sync, u8 *tslock, u8 *unlock)
++{
++	u8 data = 0;
++
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	if (priv->state != STATE_ACTIVE_TC)
++		return -EINVAL;
++	/* Set SLV-T Bank : 0x60 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x60);
++	cxd2841er_read_reg(priv, I2C_SLVT, 0x10, &data);
++	dev_dbg(&priv->i2c->dev,
++			"%s(): lock=0x%x\n", __func__, data);
++	*sync = ((data & 0x02) ? 1 : 0);
++	*tslock = ((data & 0x01) ? 1 : 0);
++	*unlock = ((data & 0x10) ? 1 : 0);
++	return 0;
++}
++
+ static int cxd2841er_read_status_tc(struct dvb_frontend *fe,
+ 				    enum fe_status *status)
+ {
+@@ -921,6 +1022,20 @@ static int cxd2841er_read_status_tc(struct dvb_frontend *fe,
+ 					FE_HAS_SYNC;
+ 			if (tslock)
+ 				*status |= FE_HAS_LOCK;
++		} else if (priv->system == SYS_ISDBT) {
++			ret = cxd2841er_read_status_i(
++					priv, &sync, &tslock, &unlock);
++			if (ret)
++				goto done;
++			if (unlock)
++				goto done;
++			if (sync)
++				*status = FE_HAS_SIGNAL |
++					FE_HAS_CARRIER |
++					FE_HAS_VITERBI |
++					FE_HAS_SYNC;
++			if (tslock)
++				*status |= FE_HAS_LOCK;
+ 		} else if (priv->system == SYS_DVBC_ANNEX_A) {
+ 			ret = cxd2841er_read_status_c(priv, &tslock);
+ 			if (ret)
+@@ -997,6 +1112,32 @@ static int cxd2841er_get_carrier_offset_s_s2(struct cxd2841er_priv *priv,
+ 	return 0;
+ }
+ 
++static int cxd2841er_get_carrier_offset_t(struct cxd2841er_priv *priv,
++					   u32 bandwidth, int *offset)
++{
++	u8 data[4];
++
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	if (priv->state != STATE_ACTIVE_TC) {
++		dev_dbg(&priv->i2c->dev, "%s(): invalid state %d\n",
++			__func__, priv->state);
++		return -EINVAL;
++	}
++	if (priv->system != SYS_DVBT) {
++		dev_dbg(&priv->i2c->dev, "%s(): invalid delivery system %d\n",
++			__func__, priv->system);
++		return -EINVAL;
++	}
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++	cxd2841er_read_regs(priv, I2C_SLVT, 0x4c, data, sizeof(data));
++	*offset = -1 * sign_extend32(
++		((u32)(data[0] & 0x1F) << 24) | ((u32)data[1] << 16) |
++		((u32)data[2] << 8) | (u32)data[3], 29);
++	*offset *= (bandwidth / 1000000);
++	*offset /= 235;
++	return 0;
++}
++
+ static int cxd2841er_get_carrier_offset_t2(struct cxd2841er_priv *priv,
+ 					   u32 bandwidth, int *offset)
+ {
+@@ -1096,6 +1237,38 @@ static int cxd2841er_read_packet_errors_t2(
+ 	return 0;
+ }
+ 
++static int cxd2841er_read_packet_errors_i(
++		struct cxd2841er_priv *priv, u32 *penum)
++{
++	u8 data[2];
++
++	*penum = 0;
++	if (priv->state != STATE_ACTIVE_TC) {
++		dev_dbg(&priv->i2c->dev, "%s(): invalid state %d\n",
++				__func__, priv->state);
++		return -EINVAL;
++	}
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x60);
++	cxd2841er_read_regs(priv, I2C_SLVT, 0xA1, data, 1);
++
++	if (!(data[0] & 0x01))
++		return 0;
++
++	/* Layer A */
++	cxd2841er_read_regs(priv, I2C_SLVT, 0xA2, data, sizeof(data));
++	*penum = ((u32)data[0] << 8) | (u32)data[1];
++
++	/* Layer B */
++	cxd2841er_read_regs(priv, I2C_SLVT, 0xA4, data, sizeof(data));
++	*penum += ((u32)data[0] << 8) | (u32)data[1];
++
++	/* Layer C */
++	cxd2841er_read_regs(priv, I2C_SLVT, 0xA6, data, sizeof(data));
++	*penum += ((u32)data[0] << 8) | (u32)data[1];
++
++	return 0;
++}
++
+ static u32 cxd2841er_mon_read_ber_s(struct cxd2841er_priv *priv)
+ {
+ 	u8 data[11];
+@@ -1391,6 +1564,37 @@ static int cxd2841er_read_snr_t2(struct cxd2841er_priv *priv, u32 *snr)
+ 	return 0;
+ }
+ 
++static int cxd2841er_read_snr_i(struct cxd2841er_priv *priv, u32 *snr)
++{
++	u32 reg;
++	u8 data[2];
++
++	*snr = 0;
++	if (priv->state != STATE_ACTIVE_TC) {
++		dev_dbg(&priv->i2c->dev,
++				"%s(): invalid state %d\n", __func__,
++				priv->state);
++		return -EINVAL;
++	}
++
++	/* Freeze all registers */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x01, 0x01);
++
++
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x60);
++	cxd2841er_read_regs(priv, I2C_SLVT, 0x28, data, sizeof(data));
++	reg = ((u32)data[0] << 8) | (u32)data[1];
++	if (reg == 0) {
++		dev_dbg(&priv->i2c->dev,
++				"%s(): reg value out of range\n", __func__);
++		return 0;
++	}
++	if (reg > 4996)
++		reg = 4996;
++	*snr = 100 * intlog10(reg) - 9031;
++	return 0;
++}
++
+ static u16 cxd2841er_read_agc_gain_t_t2(struct cxd2841er_priv *priv,
+ 					u8 delsys)
+ {
+@@ -1399,6 +1603,26 @@ static u16 cxd2841er_read_agc_gain_t_t2(struct cxd2841er_priv *priv,
+ 	cxd2841er_write_reg(
+ 		priv, I2C_SLVT, 0x00, (delsys == SYS_DVBT ? 0x10 : 0x20));
+ 	cxd2841er_read_regs(priv, I2C_SLVT, 0x26, data, 2);
++	dev_dbg(&priv->i2c->dev,
++			"%s(): AGC value=%u\n",
++			__func__, (((u16)data[0] & 0x0F) << 8) |
++			(u16)(data[1] & 0xFF));
++	return ((((u16)data[0] & 0x0F) << 8) | (u16)(data[1] & 0xFF)) << 4;
++}
++
++static u16 cxd2841er_read_agc_gain_i(struct cxd2841er_priv *priv,
++		u8 delsys)
++{
++	u8 data[2];
++
++	cxd2841er_write_reg(
++			priv, I2C_SLVT, 0x00, 0x60);
++	cxd2841er_read_regs(priv, I2C_SLVT, 0x26, data, 2);
++
++	dev_dbg(&priv->i2c->dev,
++			"%s(): AGC value=%u\n",
++			__func__, (((u16)data[0] & 0x0F) << 8) |
++			(u16)(data[1] & 0xFF));
+ 	return ((((u16)data[0] & 0x0F) << 8) | (u16)(data[1] & 0xFF)) << 4;
+ }
+ 
+@@ -1455,6 +1679,10 @@ static int cxd2841er_read_signal_strength(struct dvb_frontend *fe,
+ 		*strength = 65535 - cxd2841er_read_agc_gain_t_t2(
+ 			priv, p->delivery_system);
+ 		break;
++	case SYS_ISDBT:
++		*strength = 65535 - cxd2841er_read_agc_gain_i(
++				priv, p->delivery_system);
++		break;
+ 	case SYS_DVBS:
+ 	case SYS_DVBS2:
+ 		*strength = 65535 - cxd2841er_read_agc_gain_s(priv);
+@@ -1480,6 +1708,9 @@ static int cxd2841er_read_snr(struct dvb_frontend *fe, u16 *snr)
+ 	case SYS_DVBT2:
+ 		cxd2841er_read_snr_t2(priv, &tmp);
+ 		break;
++	case SYS_ISDBT:
++		cxd2841er_read_snr_i(priv, &tmp);
++		break;
+ 	case SYS_DVBS:
+ 	case SYS_DVBS2:
+ 		tmp = cxd2841er_dvbs_read_snr(priv, p->delivery_system);
+@@ -1506,6 +1737,9 @@ static int cxd2841er_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
+ 	case SYS_DVBT2:
+ 		cxd2841er_read_packet_errors_t2(priv, ucblocks);
+ 		break;
++	case SYS_ISDBT:
++		cxd2841er_read_packet_errors_i(priv, ucblocks);
++		break;
+ 	default:
+ 		*ucblocks = 0;
+ 		break;
+@@ -1524,15 +1758,18 @@ static int cxd2841er_dvbt2_set_profile(
+ 	switch (profile) {
+ 	case DVBT2_PROFILE_BASE:
+ 		tune_mode = 0x01;
+-		seq_not2d_time = 12;
++		/* Set early unlock time */
++		seq_not2d_time = (priv->xtal == SONY_XTAL_24000)?0x0E:0x0C;
+ 		break;
+ 	case DVBT2_PROFILE_LITE:
+ 		tune_mode = 0x05;
+-		seq_not2d_time = 40;
++		/* Set early unlock time */
++		seq_not2d_time = (priv->xtal == SONY_XTAL_24000)?0x2E:0x28;
+ 		break;
+ 	case DVBT2_PROFILE_ANY:
+ 		tune_mode = 0x00;
+-		seq_not2d_time = 40;
++		/* Set early unlock time */
++		seq_not2d_time = (priv->xtal == SONY_XTAL_24000)?0x2E:0x28;
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -1574,254 +1811,617 @@ static int cxd2841er_sleep_tc_to_active_t2_band(struct cxd2841er_priv *priv,
+ 						u32 bandwidth)
+ {
+ 	u32 iffreq;
+-	u8 b20_9f[5];
+-	u8 b10_a6[14];
+-	u8 b10_b6[3];
+-	u8 b10_d7;
++	u8 data[MAX_WRITE_REGSIZE];
++
++	const uint8_t nominalRate8bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x11, 0xF0, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
++		{0x15, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x11, 0xF0, 0x00, 0x00, 0x00}  /* 41MHz XTal */
++	};
++
++	const uint8_t nominalRate7bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x14, 0x80, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
++		{0x18, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x14, 0x80, 0x00, 0x00, 0x00}  /* 41MHz XTal */
++	};
++
++	const uint8_t nominalRate6bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x17, 0xEA, 0xAA, 0xAA, 0xAA}, /* 20.5MHz XTal */
++		{0x1C, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x17, 0xEA, 0xAA, 0xAA, 0xAA}  /* 41MHz XTal */
++	};
++
++	const uint8_t nominalRate5bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x1C, 0xB3, 0x33, 0x33, 0x33}, /* 20.5MHz XTal */
++		{0x21, 0x99, 0x99, 0x99, 0x99}, /* 24MHz XTal */
++		{0x1C, 0xB3, 0x33, 0x33, 0x33}  /* 41MHz XTal */
++	};
++
++	const uint8_t nominalRate17bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x58, 0xE2, 0xAF, 0xE0, 0xBC}, /* 20.5MHz XTal */
++		{0x68, 0x0F, 0xA2, 0x32, 0xD0}, /* 24MHz XTal */
++		{0x58, 0xE2, 0xAF, 0xE0, 0xBC}  /* 41MHz XTal */
++	};
++
++	const uint8_t itbCoef8bw[3][14] = {
++		{0x26, 0xAF, 0x06, 0xCD, 0x13, 0xBB, 0x28, 0xBA,
++			0x23, 0xA9, 0x1F, 0xA8, 0x2C, 0xC8}, /* 20.5MHz XTal */
++		{0x2F, 0xBA, 0x28, 0x9B, 0x28, 0x9D, 0x28, 0xA1,
++			0x29, 0xA5, 0x2A, 0xAC, 0x29, 0xB5}, /* 24MHz XTal   */
++		{0x26, 0xAF, 0x06, 0xCD, 0x13, 0xBB, 0x28, 0xBA,
++			0x23, 0xA9, 0x1F, 0xA8, 0x2C, 0xC8}  /* 41MHz XTal   */
++	};
++
++	const uint8_t itbCoef7bw[3][14] = {
++		{0x2C, 0xBD, 0x02, 0xCF, 0x04, 0xF8, 0x23, 0xA6,
++			0x29, 0xB0, 0x26, 0xA9, 0x21, 0xA5}, /* 20.5MHz XTal */
++		{0x30, 0xB1, 0x29, 0x9A, 0x28, 0x9C, 0x28, 0xA0,
++			0x29, 0xA2, 0x2B, 0xA6, 0x2B, 0xAD}, /* 24MHz XTal   */
++		{0x2C, 0xBD, 0x02, 0xCF, 0x04, 0xF8, 0x23, 0xA6,
++			0x29, 0xB0, 0x26, 0xA9, 0x21, 0xA5}  /* 41MHz XTal   */
++	};
++
++	const uint8_t itbCoef6bw[3][14] = {
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8,
++			0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
++		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E,
++			0x29, 0xA4, 0x29, 0xA2, 0x29, 0xA8}, /* 24MHz XTal   */
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8,
++			0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4}  /* 41MHz XTal   */
++	};
++
++	const uint8_t itbCoef5bw[3][14] = {
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8,
++			0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
++		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E,
++			0x29, 0xA4, 0x29, 0xA2, 0x29, 0xA8}, /* 24MHz XTal   */
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8,
++			0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4}  /* 41MHz XTal   */
++	};
++
++	const uint8_t itbCoef17bw[3][14] = {
++		{0x25, 0xA0, 0x36, 0x8D, 0x2E, 0x94, 0x28, 0x9B,
++			0x32, 0x90, 0x2C, 0x9D, 0x29, 0x99}, /* 20.5MHz XTal */
++		{0x33, 0x8E, 0x2B, 0x97, 0x2D, 0x95, 0x37, 0x8B,
++			0x30, 0x97, 0x2D, 0x9A, 0x21, 0xA4}, /* 24MHz XTal   */
++		{0x25, 0xA0, 0x36, 0x8D, 0x2E, 0x94, 0x28, 0x9B,
++			0x32, 0x90, 0x2C, 0x9D, 0x29, 0x99}  /* 41MHz XTal   */
++	};
++
++	/* Set SLV-T Bank : 0x20 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x20);
+ 
+-	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+ 	switch (bandwidth) {
+ 	case 8000000:
+-		/* bank 0x20, reg 0x9f */
+-		b20_9f[0] = 0x11;
+-		b20_9f[1] = 0xf0;
+-		b20_9f[2] = 0x00;
+-		b20_9f[3] = 0x00;
+-		b20_9f[4] = 0x00;
+-		/* bank 0x10, reg 0xa6 */
+-		b10_a6[0] = 0x26;
+-		b10_a6[1] = 0xaf;
+-		b10_a6[2] = 0x06;
+-		b10_a6[3] = 0xcd;
+-		b10_a6[4] = 0x13;
+-		b10_a6[5] = 0xbb;
+-		b10_a6[6] = 0x28;
+-		b10_a6[7] = 0xba;
+-		b10_a6[8] = 0x23;
+-		b10_a6[9] = 0xa9;
+-		b10_a6[10] = 0x1f;
+-		b10_a6[11] = 0xa8;
+-		b10_a6[12] = 0x2c;
+-		b10_a6[13] = 0xc8;
+-		iffreq = MAKE_IFFREQ_CONFIG(4.80);
+-		b10_d7 = 0x00;
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate8bw[priv->xtal], 5);
++
++		/* Set SLV-T Bank : 0x27 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
++		cxd2841er_set_reg_bits(priv, I2C_SLVT,
++				0x7a, 0x00, 0x0f);
++
++		/* Set SLV-T Bank : 0x10 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		 */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef8bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 4.80);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++				priv, I2C_SLVT, 0xD7, 0x00, 0x07);
+ 		break;
+ 	case 7000000:
+-		/* bank 0x20, reg 0x9f */
+-		b20_9f[0] = 0x14;
+-		b20_9f[1] = 0x80;
+-		b20_9f[2] = 0x00;
+-		b20_9f[3] = 0x00;
+-		b20_9f[4] = 0x00;
+-		/* bank 0x10, reg 0xa6 */
+-		b10_a6[0] = 0x2C;
+-		b10_a6[1] = 0xBD;
+-		b10_a6[2] = 0x02;
+-		b10_a6[3] = 0xCF;
+-		b10_a6[4] = 0x04;
+-		b10_a6[5] = 0xF8;
+-		b10_a6[6] = 0x23;
+-		b10_a6[7] = 0xA6;
+-		b10_a6[8] = 0x29;
+-		b10_a6[9] = 0xB0;
+-		b10_a6[10] = 0x26;
+-		b10_a6[11] = 0xA9;
+-		b10_a6[12] = 0x21;
+-		b10_a6[13] = 0xA5;
+-		iffreq = MAKE_IFFREQ_CONFIG(4.2);
+-		b10_d7 = 0x02;
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate7bw[priv->xtal], 5);
++
++		/* Set SLV-T Bank : 0x27 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
++		cxd2841er_set_reg_bits(priv, I2C_SLVT,
++				0x7a, 0x00, 0x0f);
++
++		/* Set SLV-T Bank : 0x10 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		 */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef7bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 4.20);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++				priv, I2C_SLVT, 0xD7, 0x02, 0x07);
+ 		break;
+ 	case 6000000:
+-		/* bank 0x20, reg 0x9f */
+-		b20_9f[0] = 0x17;
+-		b20_9f[1] = 0xEA;
+-		b20_9f[2] = 0xAA;
+-		b20_9f[3] = 0xAA;
+-		b20_9f[4] = 0xAA;
+-		/* bank 0x10, reg 0xa6 */
+-		b10_a6[0] = 0x27;
+-		b10_a6[1] = 0xA7;
+-		b10_a6[2] = 0x28;
+-		b10_a6[3] = 0xB3;
+-		b10_a6[4] = 0x02;
+-		b10_a6[5] = 0xF0;
+-		b10_a6[6] = 0x01;
+-		b10_a6[7] = 0xE8;
+-		b10_a6[8] = 0x00;
+-		b10_a6[9] = 0xCF;
+-		b10_a6[10] = 0x00;
+-		b10_a6[11] = 0xE6;
+-		b10_a6[12] = 0x23;
+-		b10_a6[13] = 0xA4;
+-		iffreq = MAKE_IFFREQ_CONFIG(3.6);
+-		b10_d7 = 0x04;
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate6bw[priv->xtal], 5);
++
++		/* Set SLV-T Bank : 0x27 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
++		cxd2841er_set_reg_bits(priv, I2C_SLVT,
++				0x7a, 0x00, 0x0f);
++
++		/* Set SLV-T Bank : 0x10 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		 */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef6bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 3.60);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++				priv, I2C_SLVT, 0xD7, 0x04, 0x07);
+ 		break;
+ 	case 5000000:
+-		/* bank 0x20, reg 0x9f */
+-		b20_9f[0] = 0x1C;
+-		b20_9f[1] = 0xB3;
+-		b20_9f[2] = 0x33;
+-		b20_9f[3] = 0x33;
+-		b20_9f[4] = 0x33;
+-		/* bank 0x10, reg 0xa6 */
+-		b10_a6[0] = 0x27;
+-		b10_a6[1] = 0xA7;
+-		b10_a6[2] = 0x28;
+-		b10_a6[3] = 0xB3;
+-		b10_a6[4] = 0x02;
+-		b10_a6[5] = 0xF0;
+-		b10_a6[6] = 0x01;
+-		b10_a6[7] = 0xE8;
+-		b10_a6[8] = 0x00;
+-		b10_a6[9] = 0xCF;
+-		b10_a6[10] = 0x00;
+-		b10_a6[11] = 0xE6;
+-		b10_a6[12] = 0x23;
+-		b10_a6[13] = 0xA4;
+-		iffreq = MAKE_IFFREQ_CONFIG(3.6);
+-		b10_d7 = 0x06;
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate5bw[priv->xtal], 5);
++
++		/* Set SLV-T Bank : 0x27 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
++		cxd2841er_set_reg_bits(priv, I2C_SLVT,
++				0x7a, 0x00, 0x0f);
++
++		/* Set SLV-T Bank : 0x10 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		 */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef5bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 3.60);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++				priv, I2C_SLVT, 0xD7, 0x06, 0x07);
+ 		break;
+ 	case 1712000:
+-		/* bank 0x20, reg 0x9f */
+-		b20_9f[0] = 0x58;
+-		b20_9f[1] = 0xE2;
+-		b20_9f[2] = 0xAF;
+-		b20_9f[3] = 0xE0;
+-		b20_9f[4] = 0xBC;
+-		/* bank 0x10, reg 0xa6 */
+-		b10_a6[0] = 0x25;
+-		b10_a6[1] = 0xA0;
+-		b10_a6[2] = 0x36;
+-		b10_a6[3] = 0x8D;
+-		b10_a6[4] = 0x2E;
+-		b10_a6[5] = 0x94;
+-		b10_a6[6] = 0x28;
+-		b10_a6[7] = 0x9B;
+-		b10_a6[8] = 0x32;
+-		b10_a6[9] = 0x90;
+-		b10_a6[10] = 0x2C;
+-		b10_a6[11] = 0x9D;
+-		b10_a6[12] = 0x29;
+-		b10_a6[13] = 0x99;
+-		iffreq = MAKE_IFFREQ_CONFIG(3.5);
+-		b10_d7 = 0x03;
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate17bw[priv->xtal], 5);
++
++		/* Set SLV-T Bank : 0x27 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
++		cxd2841er_set_reg_bits(priv, I2C_SLVT,
++				0x7a, 0x03, 0x0f);
++
++		/* Set SLV-T Bank : 0x10 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		 */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef17bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 3.50);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++				priv, I2C_SLVT, 0xD7, 0x03, 0x07);
+ 		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+-	/* Set SLV-T Bank : 0x20 */
+-	cxd2841er_write_reg(priv, I2C_SLVX, 0x00, 0x20);
+-	cxd2841er_write_regs(priv, I2C_SLVT, 0x9f, b20_9f, sizeof(b20_9f));
+-	/* Set SLV-T Bank : 0x27 */
+-	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
+-	cxd2841er_set_reg_bits(
+-		priv, I2C_SLVT, 0x7a,
+-		(bandwidth == 1712000 ? 0x03 : 0x00), 0x0f);
+-	/* Set SLV-T Bank : 0x10 */
+-	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
+-	/* Group delay equaliser sett. for ASCOT2E */
+-	cxd2841er_write_regs(priv, I2C_SLVT, 0xa6, b10_a6, sizeof(b10_a6));
+-	/* <IF freq setting> */
+-	b10_b6[0] = (u8) ((iffreq >> 16) & 0xff);
+-	b10_b6[1] = (u8)((iffreq >> 8) & 0xff);
+-	b10_b6[2] = (u8)(iffreq & 0xff);
+-	cxd2841er_write_regs(priv, I2C_SLVT, 0xb6, b10_b6, sizeof(b10_b6));
+-	/* System bandwidth setting */
+-	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xd7, b10_d7, 0x07);
+ 	return 0;
+ }
+ 
+ static int cxd2841er_sleep_tc_to_active_t_band(
+ 		struct cxd2841er_priv *priv, u32 bandwidth)
+ {
+-	u8 b13_9c[2] = { 0x01, 0x14 };
+-	u8 bw8mhz_b10_9f[] = { 0x11, 0xF0, 0x00, 0x00, 0x00 };
+-	u8 bw8mhz_b10_a6[] = { 0x26, 0xAF, 0x06, 0xCD, 0x13, 0xBB,
+-			0x28, 0xBA, 0x23, 0xA9, 0x1F, 0xA8, 0x2C, 0xC8 };
+-	u8 bw8mhz_b10_d9[] = { 0x01, 0xE0 };
+-	u8 bw8mhz_b17_38[] = { 0x01, 0x02 };
+-	u8 bw7mhz_b10_9f[] = { 0x14, 0x80, 0x00, 0x00, 0x00 };
+-	u8 bw7mhz_b10_a6[] = { 0x2C, 0xBD, 0x02, 0xCF, 0x04, 0xF8,
+-			0x23, 0xA6, 0x29, 0xB0, 0x26, 0xA9, 0x21, 0xA5 };
+-	u8 bw7mhz_b10_d9[] = { 0x12, 0xF8 };
+-	u8 bw7mhz_b17_38[] = { 0x00, 0x03 };
+-	u8 bw6mhz_b10_9f[] = { 0x17, 0xEA, 0xAA, 0xAA, 0xAA };
+-	u8 bw6mhz_b10_a6[] = { 0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0,
+-			0x01, 0xE8, 0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4 };
+-	u8 bw6mhz_b10_d9[] = { 0x1F, 0xDC };
+-	u8 bw6mhz_b17_38[] = { 0x00, 0x03 };
+-	u8 bw5mhz_b10_9f[] = { 0x1C, 0xB3, 0x33, 0x33, 0x33 };
+-	u8 bw5mhz_b10_a6[] = { 0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0,
+-			0x01, 0xE8, 0x00, 0xCF, 0x00, 0xE6, 0x23, 0xA4 };
+-	u8 bw5mhz_b10_d9[] = { 0x26, 0x3C };
+-	u8 bw5mhz_b17_38[] = { 0x00, 0x03 };
+-	u8 b10_b6[3];
+-	u8 d7val;
++	u8 data[MAX_WRITE_REGSIZE];
+ 	u32 iffreq;
+-	u8 *b10_9f;
+-	u8 *b10_a6;
+-	u8 *b10_d9;
+-	u8 *b17_38;
++	u8 nominalRate8bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x11, 0xF0, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
++		{0x15, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x11, 0xF0, 0x00, 0x00, 0x00}  /* 41MHz XTal */
++	};
++	u8 nominalRate7bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x14, 0x80, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
++		{0x18, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x14, 0x80, 0x00, 0x00, 0x00}  /* 41MHz XTal */
++	};
++	u8 nominalRate6bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x17, 0xEA, 0xAA, 0xAA, 0xAA}, /* 20.5MHz XTal */
++		{0x1C, 0x00, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x17, 0xEA, 0xAA, 0xAA, 0xAA}  /* 41MHz XTal */
++	};
++	u8 nominalRate5bw[3][5] = {
++		/* TRCG Nominal Rate [37:0] */
++		{0x1C, 0xB3, 0x33, 0x33, 0x33}, /* 20.5MHz XTal */
++		{0x21, 0x99, 0x99, 0x99, 0x99}, /* 24MHz XTal */
++		{0x1C, 0xB3, 0x33, 0x33, 0x33}  /* 41MHz XTal */
++	};
+ 
+-	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	u8 itbCoef8bw[3][14] = {
++		{0x26, 0xAF, 0x06, 0xCD, 0x13, 0xBB, 0x28, 0xBA, 0x23, 0xA9,
++			0x1F, 0xA8, 0x2C, 0xC8}, /* 20.5MHz XTal */
++		{0x2F, 0xBA, 0x28, 0x9B, 0x28, 0x9D, 0x28, 0xA1, 0x29, 0xA5,
++			0x2A, 0xAC, 0x29, 0xB5}, /* 24MHz XTal   */
++		{0x26, 0xAF, 0x06, 0xCD, 0x13, 0xBB, 0x28, 0xBA, 0x23, 0xA9,
++			0x1F, 0xA8, 0x2C, 0xC8}  /* 41MHz XTal   */
++	};
++	u8 itbCoef7bw[3][14] = {
++		{0x2C, 0xBD, 0x02, 0xCF, 0x04, 0xF8, 0x23, 0xA6, 0x29, 0xB0,
++			0x26, 0xA9, 0x21, 0xA5}, /* 20.5MHz XTal */
++		{0x30, 0xB1, 0x29, 0x9A, 0x28, 0x9C, 0x28, 0xA0, 0x29, 0xA2,
++			0x2B, 0xA6, 0x2B, 0xAD}, /* 24MHz XTal   */
++		{0x2C, 0xBD, 0x02, 0xCF, 0x04, 0xF8, 0x23, 0xA6, 0x29, 0xB0,
++			0x26, 0xA9, 0x21, 0xA5}  /* 41MHz XTal   */
++	};
++	u8 itbCoef6bw[3][14] = {
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00, 0xCF,
++			0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
++		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E, 0x29, 0xA4,
++			0x29, 0xA2, 0x29, 0xA8}, /* 24MHz XTal   */
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00, 0xCF,
++			0x00, 0xE6, 0x23, 0xA4}  /* 41MHz XTal   */
++	};
++	u8 itbCoef5bw[3][14] = {
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00, 0xCF,
++			0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
++		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E, 0x29, 0xA4,
++			0x29, 0xA2, 0x29, 0xA8}, /* 24MHz XTal   */
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00, 0xCF,
++			0x00, 0xE6, 0x23, 0xA4}  /* 41MHz XTal   */
++	};
++
++	/* Set SLV-T Bank : 0x13 */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x13);
+ 	/* Echo performance optimization setting */
+-	cxd2841er_write_regs(priv, I2C_SLVT, 0x9c, b13_9c, sizeof(b13_9c));
++	data[0] = 0x01;
++	data[1] = 0x14;
++	cxd2841er_write_regs(priv, I2C_SLVT, 0x9C, data, 2);
++
++	/* Set SLV-T Bank : 0x10 */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
+ 
+ 	switch (bandwidth) {
+ 	case 8000000:
+-		b10_9f = bw8mhz_b10_9f;
+-		b10_a6 = bw8mhz_b10_a6;
+-		b10_d9 = bw8mhz_b10_d9;
+-		b17_38 = bw8mhz_b17_38;
+-		d7val = 0;
+-		iffreq = MAKE_IFFREQ_CONFIG(4.80);
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate8bw[priv->xtal], 5);
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		*/
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef8bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 4.80);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++			priv, I2C_SLVT, 0xD7, 0x00, 0x07);
++
++		/* Demod core latency setting */
++		if (priv->xtal == SONY_XTAL_24000) {
++			data[0] = 0x15;
++			data[1] = 0x28;
++		} else {
++			data[0] = 0x01;
++			data[1] = 0xE0;
++		}
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
++
++		/* Notch filter setting */
++		data[0] = 0x01;
++		data[1] = 0x02;
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x17);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x38, data, 2);
+ 		break;
+ 	case 7000000:
+-		b10_9f = bw7mhz_b10_9f;
+-		b10_a6 = bw7mhz_b10_a6;
+-		b10_d9 = bw7mhz_b10_d9;
+-		b17_38 = bw7mhz_b17_38;
+-		d7val = 2;
+-		iffreq = MAKE_IFFREQ_CONFIG(4.20);
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate7bw[priv->xtal], 5);
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		*/
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef7bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 4.20);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++			priv, I2C_SLVT, 0xD7, 0x02, 0x07);
++
++		/* Demod core latency setting */
++		if (priv->xtal == SONY_XTAL_24000) {
++			data[0] = 0x1F;
++			data[1] = 0xF8;
++		} else {
++			data[0] = 0x12;
++			data[1] = 0xF8;
++		}
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
++
++		/* Notch filter setting */
++		data[0] = 0x00;
++		data[1] = 0x03;
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x17);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x38, data, 2);
+ 		break;
+ 	case 6000000:
+-		b10_9f = bw6mhz_b10_9f;
+-		b10_a6 = bw6mhz_b10_a6;
+-		b10_d9 = bw6mhz_b10_d9;
+-		b17_38 = bw6mhz_b17_38;
+-		d7val = 4;
+-		iffreq = MAKE_IFFREQ_CONFIG(3.60);
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate6bw[priv->xtal], 5);
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		*/
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef6bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 3.60);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++			priv, I2C_SLVT, 0xD7, 0x04, 0x07);
++
++		/* Demod core latency setting */
++		if (priv->xtal == SONY_XTAL_24000) {
++			data[0] = 0x25;
++			data[1] = 0x4C;
++		} else {
++			data[0] = 0x1F;
++			data[1] = 0xDC;
++		}
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
++
++		/* Notch filter setting */
++		data[0] = 0x00;
++		data[1] = 0x03;
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x17);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x38, data, 2);
+ 		break;
+ 	case 5000000:
+-		b10_9f = bw5mhz_b10_9f;
+-		b10_a6 = bw5mhz_b10_a6;
+-		b10_d9 = bw5mhz_b10_d9;
+-		b17_38 = bw5mhz_b17_38;
+-		d7val = 6;
+-		iffreq = MAKE_IFFREQ_CONFIG(3.60);
++		/* <Timing Recovery setting> */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate5bw[priv->xtal], 5);
++		/* Group delay equaliser settings for
++		 * ASCOT2D, ASCOT2E and ASCOT3 tuners
++		*/
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef5bw[priv->xtal], 14);
++		/* <IF freq setting> */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 3.60);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(
++			priv, I2C_SLVT, 0xD7, 0x06, 0x07);
++
++		/* Demod core latency setting */
++		if (priv->xtal == SONY_XTAL_24000) {
++			data[0] = 0x2C;
++			data[1] = 0xC2;
++		} else {
++			data[0] = 0x26;
++			data[1] = 0x3C;
++		}
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
++
++		/* Notch filter setting */
++		data[0] = 0x00;
++		data[1] = 0x03;
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x17);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x38, data, 2);
++		break;
++	}
++
++	return 0;
++}
++
++static int cxd2841er_sleep_tc_to_active_i_band(
++		struct cxd2841er_priv *priv, u32 bandwidth)
++{
++	u32 iffreq;
++	u8 data[3];
++
++	/* TRCG Nominal Rate */
++	u8 nominalRate8bw[3][5] = {
++		{0x00, 0x00, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
++		{0x11, 0xB8, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x00, 0x00, 0x00, 0x00, 0x00}  /* 41MHz XTal */
++	};
++
++	u8 nominalRate7bw[3][5] = {
++		{0x00, 0x00, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
++		{0x14, 0x40, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x00, 0x00, 0x00, 0x00, 0x00}  /* 41MHz XTal */
++	};
++
++	u8 nominalRate6bw[3][5] = {
++		{0x14, 0x2E, 0x00, 0x00, 0x00}, /* 20.5MHz XTal */
++		{0x17, 0xA0, 0x00, 0x00, 0x00}, /* 24MHz XTal */
++		{0x14, 0x2E, 0x00, 0x00, 0x00}  /* 41MHz XTal */
++	};
++
++	u8 itbCoef8bw[3][14] = {
++		{0x00}, /* 20.5MHz XTal */
++		{0x2F, 0xBA, 0x28, 0x9B, 0x28, 0x9D, 0x28, 0xA1, 0x29,
++			0xA5, 0x2A, 0xAC, 0x29, 0xB5}, /* 24MHz Xtal */
++		{0x0}, /* 41MHz XTal   */
++	};
++
++	u8 itbCoef7bw[3][14] = {
++		{0x00}, /* 20.5MHz XTal */
++		{0x30, 0xB1, 0x29, 0x9A, 0x28, 0x9C, 0x28, 0xA0, 0x29,
++			0xA2, 0x2B, 0xA6, 0x2B, 0xAD}, /* 24MHz Xtal */
++		{0x00}, /* 41MHz XTal   */
++	};
++
++	u8 itbCoef6bw[3][14] = {
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00,
++			0xCF, 0x00, 0xE6, 0x23, 0xA4}, /* 20.5MHz XTal */
++		{0x31, 0xA8, 0x29, 0x9B, 0x27, 0x9C, 0x28, 0x9E, 0x29,
++			0xA4, 0x29, 0xA2, 0x29, 0xA8}, /* 24MHz Xtal   */
++		{0x27, 0xA7, 0x28, 0xB3, 0x02, 0xF0, 0x01, 0xE8, 0x00,
++			0xCF, 0x00, 0xE6, 0x23, 0xA4}, /* 41MHz XTal   */
++	};
++
++	dev_dbg(&priv->i2c->dev, "%s() bandwidth=%u\n", __func__, bandwidth);
++	/* Set SLV-T Bank : 0x10 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++
++	/*  20.5/41MHz Xtal support is not available
++	 *  on ISDB-T 7MHzBW and 8MHzBW
++	*/
++	if (priv->xtal != SONY_XTAL_24000 && bandwidth > 6000000) {
++		dev_err(&priv->i2c->dev,
++			"%s(): bandwidth %d supported only for 24MHz xtal\n",
++			__func__, bandwidth);
++		return -EINVAL;
++	}
++
++	switch (bandwidth) {
++	case 8000000:
++		/* TRCG Nominal Rate */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate8bw[priv->xtal], 5);
++		/*  Group delay equaliser settings for ASCOT tuners optimized */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef8bw[priv->xtal], 14);
++
++		/* IF freq setting */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 4.75);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xd7, 0x0, 0x7);
++
++		/* Demod core latency setting */
++		data[0] = 0x13;
++		data[1] = 0xFC;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
++
++		/* Acquisition optimization setting */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x12);
++		cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x71, 0x03, 0x07);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x15);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0xBE, 0x03);
++		break;
++	case 7000000:
++		/* TRCG Nominal Rate */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate7bw[priv->xtal], 5);
++		/*  Group delay equaliser settings for ASCOT tuners optimized */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef7bw[priv->xtal], 14);
++
++		/* IF freq setting */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 4.15);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xd7, 0x02, 0x7);
++
++		/* Demod core latency setting */
++		data[0] = 0x1A;
++		data[1] = 0xFA;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
++
++		/* Acquisition optimization setting */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x12);
++		cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x71, 0x03, 0x07);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x15);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0xBE, 0x02);
++		break;
++	case 6000000:
++		/* TRCG Nominal Rate */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0x9F, nominalRate6bw[priv->xtal], 5);
++		/*  Group delay equaliser settings for ASCOT tuners optimized */
++		cxd2841er_write_regs(priv, I2C_SLVT,
++				0xA6, itbCoef6bw[priv->xtal], 14);
++
++		/* IF freq setting */
++		iffreq = MAKE_IFFREQ_CONFIG_XTAL(priv->xtal, 3.55);
++		data[0] = (u8) ((iffreq >> 16) & 0xff);
++		data[1] = (u8)((iffreq >> 8) & 0xff);
++		data[2] = (u8)(iffreq & 0xff);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xB6, data, 3);
++
++		/* System bandwidth setting */
++		cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xd7, 0x04, 0x7);
++
++		/* Demod core latency setting */
++		if (priv->xtal == SONY_XTAL_24000) {
++			data[0] = 0x1F;
++			data[1] = 0x79;
++		} else {
++			data[0] = 0x1A;
++			data[1] = 0xE2;
++		}
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
++
++		/* Acquisition optimization setting */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x12);
++		cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x71, 0x07, 0x07);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x15);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0xBE, 0x02);
+ 		break;
+ 	default:
+ 		dev_dbg(&priv->i2c->dev, "%s(): invalid bandwidth %d\n",
+-			__func__, bandwidth);
++				__func__, bandwidth);
+ 		return -EINVAL;
+ 	}
+-	/* <IF freq setting> */
+-	b10_b6[0] = (u8) ((iffreq >> 16) & 0xff);
+-	b10_b6[1] = (u8)((iffreq >> 8) & 0xff);
+-	b10_b6[2] = (u8)(iffreq & 0xff);
+-	cxd2841er_write_regs(
+-		priv, I2C_SLVT, 0x9f, b10_9f, sizeof(bw8mhz_b10_9f));
+-	cxd2841er_write_regs(
+-		priv, I2C_SLVT, 0xa6, b10_a6, sizeof(bw8mhz_b10_a6));
+-	cxd2841er_write_regs(priv, I2C_SLVT, 0xb6, b10_b6, sizeof(b10_b6));
+-	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xd7, d7val, 0x7);
+-	cxd2841er_write_regs(
+-		priv, I2C_SLVT, 0xd9, b10_d9, sizeof(bw8mhz_b10_d9));
+-	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x17);
+-	cxd2841er_write_regs(
+-		priv, I2C_SLVT, 0x38, b17_38, sizeof(bw8mhz_b17_38));
+ 	return 0;
+ }
+ 
+@@ -1902,6 +2502,7 @@ static int cxd2841er_sleep_tc_to_active_t(struct cxd2841er_priv *priv,
+ 					  u32 bandwidth)
+ {
+ 	u8 data[2] = { 0x09, 0x54 };
++	u8 data24m[3] = {0xDC, 0x6C, 0x00};
+ 
+ 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+ 	cxd2841er_set_ts_clock_mode(priv, SYS_DVBT);
+@@ -1919,7 +2520,11 @@ static int cxd2841er_sleep_tc_to_active_t(struct cxd2841er_priv *priv,
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x30, 0x00);
+ 	/* Enable ADC 1 */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x41, 0x1a);
+-	/* xtal freq 20.5MHz */
++	/* Enable ADC 2 & 3 */
++	if (priv->xtal == SONY_XTAL_41000) {
++		data[0] = 0x0A;
++		data[1] = 0xD4;
++	}
+ 	cxd2841er_write_regs(priv, I2C_SLVT, 0x43, data, 2);
+ 	/* Enable ADC 4 */
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x18, 0x00);
+@@ -1947,6 +2552,15 @@ static int cxd2841er_sleep_tc_to_active_t(struct cxd2841er_priv *priv,
+ 	/* TSIF setting */
+ 	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xce, 0x01, 0x01);
+ 	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xcf, 0x01, 0x01);
++
++	if (priv->xtal == SONY_XTAL_24000) {
++		/* Set SLV-T Bank : 0x10 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0xBF, 0x60);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x18);
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x24, data24m, 3);
++	}
++
+ 	cxd2841er_sleep_tc_to_active_t_band(priv, bandwidth);
+ 	/* Set SLV-T Bank : 0x00 */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x00);
+@@ -1961,7 +2575,7 @@ static int cxd2841er_sleep_tc_to_active_t(struct cxd2841er_priv *priv,
+ static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
+ 					   u32 bandwidth)
+ {
+-	u8 data[2] = { 0x09, 0x54 };
++	u8 data[MAX_WRITE_REGSIZE];
+ 
+ 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+ 	cxd2841er_set_ts_clock_mode(priv, SYS_DVBT2);
+@@ -1974,12 +2588,21 @@ static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
+ 	/* Enable demod clock */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x2c, 0x01);
+ 	/* Disable RF level monitor */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x59, 0x00);
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x2f, 0x00);
+ 	/* Enable ADC clock */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x30, 0x00);
+ 	/* Enable ADC 1 */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x41, 0x1a);
+-	/* xtal freq 20.5MHz */
++
++	if (priv->xtal == SONY_XTAL_41000) {
++		data[0] = 0x0A;
++		data[1] = 0xD4;
++	} else {
++		data[0] = 0x09;
++		data[1] = 0x54;
++	}
++
+ 	cxd2841er_write_regs(priv, I2C_SLVT, 0x43, data, 2);
+ 	/* Enable ADC 4 */
+ 	cxd2841er_write_reg(priv, I2C_SLVX, 0x18, 0x00);
+@@ -2002,6 +2625,10 @@ static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
+ 	/* Set SLV-T Bank : 0x2b */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x2b);
+ 	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x76, 0x20, 0x70);
++	/* Set SLV-T Bank : 0x23 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x23);
++	/* L1 Control setting */
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xE6, 0x00, 0x03);
+ 	/* Set SLV-T Bank : 0x00 */
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x00);
+ 	/* TSIF setting */
+@@ -2020,6 +2647,72 @@ static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
+ 	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x2b);
+ 	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x11, 0x20, 0x3f);
+ 
++	/* 24MHz Xtal setting */
++	if (priv->xtal == SONY_XTAL_24000) {
++		/* Set SLV-T Bank : 0x11 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x11);
++		data[0] = 0xEB;
++		data[1] = 0x03;
++		data[2] = 0x3B;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x33, data, 3);
++
++		/* Set SLV-T Bank : 0x20 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x20);
++		data[0] = 0x5E;
++		data[1] = 0x5E;
++		data[2] = 0x47;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x95, data, 3);
++
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x99, 0x18);
++
++		data[0] = 0x3F;
++		data[1] = 0xFF;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD9, data, 2);
++
++		/* Set SLV-T Bank : 0x24 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x24);
++		data[0] = 0x0B;
++		data[1] = 0x72;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x34, data, 2);
++
++		data[0] = 0x93;
++		data[1] = 0xF3;
++		data[2] = 0x00;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xD2, data, 3);
++
++		data[0] = 0x05;
++		data[1] = 0xB8;
++		data[2] = 0xD8;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0xDD, data, 3);
++
++		cxd2841er_write_reg(priv, I2C_SLVT, 0xE0, 0x00);
++
++		/* Set SLV-T Bank : 0x25 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x25);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0xED, 0x60);
++
++		/* Set SLV-T Bank : 0x27 */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x27);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0xFA, 0x34);
++
++		/* Set SLV-T Bank : 0x2B */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x2B);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x4B, 0x2F);
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x9E, 0x0E);
++
++		/* Set SLV-T Bank : 0x2D */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x2D);
++		data[0] = 0x89;
++		data[1] = 0x89;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x24, data, 2);
++
++		/* Set SLV-T Bank : 0x5E */
++		cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x5E);
++		data[0] = 0x24;
++		data[1] = 0x95;
++		cxd2841er_write_regs(priv, I2C_SLVT, 0x8C, data, 2);
++	}
++
+ 	cxd2841er_sleep_tc_to_active_t2_band(priv, bandwidth);
+ 
+ 	/* Set SLV-T Bank : 0x00 */
+@@ -2032,6 +2725,84 @@ static int cxd2841er_sleep_tc_to_active_t2(struct cxd2841er_priv *priv,
+ 	return 0;
+ }
+ 
++/* ISDB-Tb part */
++static int cxd2841er_sleep_tc_to_active_i(struct cxd2841er_priv *priv,
++		u32 bandwidth)
++{
++	u8 data[2] = { 0x09, 0x54 };
++	u8 data24m[2] = {0x60, 0x00};
++	u8 data24m2[3] = {0xB7, 0x1B, 0x00};
++
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	cxd2841er_set_ts_clock_mode(priv, SYS_DVBT);
++	/* Set SLV-X Bank : 0x00 */
++	cxd2841er_write_reg(priv, I2C_SLVX, 0x00, 0x00);
++	/* Set demod mode */
++	cxd2841er_write_reg(priv, I2C_SLVX, 0x17, 0x06);
++	/* Set SLV-T Bank : 0x00 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x00);
++	/* Enable demod clock */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x2c, 0x01);
++	/* Enable RF level monitor */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x2f, 0x01);
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x59, 0x01);
++	/* Enable ADC clock */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x30, 0x00);
++	/* Enable ADC 1 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x41, 0x1a);
++	/* xtal freq 20.5MHz or 24M */
++	cxd2841er_write_regs(priv, I2C_SLVT, 0x43, data, 2);
++	/* Enable ADC 4 */
++	cxd2841er_write_reg(priv, I2C_SLVX, 0x18, 0x00);
++	/* ASCOT setting ON */
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xa5, 0x01, 0x01);
++	/* FEC Auto Recovery setting */
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x30, 0x01, 0x01);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x31, 0x00, 0x01);
++	/* ISDB-T initial setting */
++	/* Set SLV-T Bank : 0x00 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x00);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xce, 0x00, 0x01);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xcf, 0x00, 0x01);
++	/* Set SLV-T Bank : 0x10 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x69, 0x04, 0x07);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x6B, 0x03, 0x07);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x9D, 0x50, 0xFF);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xD3, 0x06, 0x1F);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xED, 0x00, 0x01);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xE2, 0xCE, 0x80);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xF2, 0x13, 0x10);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xDE, 0x2E, 0x3F);
++	/* Set SLV-T Bank : 0x15 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x15);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0xDE, 0x02, 0x03);
++	/* Set SLV-T Bank : 0x1E */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x1E);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x73, 0x68, 0xFF);
++	/* Set SLV-T Bank : 0x63 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x63);
++	cxd2841er_set_reg_bits(priv, I2C_SLVT, 0x81, 0x00, 0x01);
++
++	/* for xtal 24MHz */
++	/* Set SLV-T Bank : 0x10 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x10);
++	cxd2841er_write_regs(priv, I2C_SLVT, 0xBF, data24m, 2);
++	/* Set SLV-T Bank : 0x60 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x60);
++	cxd2841er_write_regs(priv, I2C_SLVT, 0xA8, data24m2, 3);
++
++	cxd2841er_sleep_tc_to_active_i_band(priv, bandwidth);
++	/* Set SLV-T Bank : 0x00 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x00, 0x00);
++	/* Disable HiZ Setting 1 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x80, 0x28);
++	/* Disable HiZ Setting 2 */
++	cxd2841er_write_reg(priv, I2C_SLVT, 0x81, 0x00);
++	priv->state = STATE_ACTIVE_TC;
++	return 0;
++}
++
+ static int cxd2841er_sleep_tc_to_active_c(struct cxd2841er_priv *priv,
+ 					  u32 bandwidth)
+ {
+@@ -2142,10 +2913,10 @@ static int cxd2841er_set_frontend_s(struct dvb_frontend *fe)
+ 	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
+ 	u32 symbol_rate = p->symbol_rate/1000;
+ 
+-	dev_dbg(&priv->i2c->dev, "%s(): %s frequency=%d symbol_rate=%d\n",
++	dev_dbg(&priv->i2c->dev, "%s(): %s frequency=%d symbol_rate=%d xtal=%d\n",
+ 		__func__,
+ 		(p->delivery_system == SYS_DVBS ? "DVB-S" : "DVB-S2"),
+-		 p->frequency, symbol_rate);
++		 p->frequency, symbol_rate, priv->xtal);
+ 	switch (priv->state) {
+ 	case STATE_SLEEP_S:
+ 		ret = cxd2841er_sleep_s_to_active_s(
+@@ -2233,6 +3004,21 @@ static int cxd2841er_set_frontend_tc(struct dvb_frontend *fe)
+ 				__func__, priv->state);
+ 			ret = -EINVAL;
+ 		}
++	} else if (p->delivery_system == SYS_ISDBT) {
++		priv->system = SYS_ISDBT;
++		switch (priv->state) {
++		case STATE_SLEEP_TC:
++			ret = cxd2841er_sleep_tc_to_active_i(
++					priv, p->bandwidth_hz);
++			break;
++		case STATE_ACTIVE_TC:
++			ret = cxd2841er_retune_active(priv, p);
++			break;
++		default:
++			dev_dbg(&priv->i2c->dev, "%s(): invalid state %d\n",
++					__func__, priv->state);
++			ret = -EINVAL;
++		}
+ 	} else if (p->delivery_system == SYS_DVBC_ANNEX_A ||
+ 			p->delivery_system == SYS_DVBC_ANNEX_C) {
+ 		priv->system = SYS_DVBC_ANNEX_A;
+@@ -2330,6 +3116,10 @@ static int cxd2841er_tune_tc(struct dvb_frontend *fe,
+ 		if (*status & FE_HAS_LOCK) {
+ 			switch (priv->system) {
+ 			case SYS_DVBT:
++				ret = cxd2841er_get_carrier_offset_t(
++					priv, p->bandwidth_hz,
++					&carrier_offset);
++				break;
+ 			case SYS_DVBT2:
+ 				ret = cxd2841er_get_carrier_offset_t2(
+ 					priv, p->bandwidth_hz,
+@@ -2382,6 +3172,9 @@ static int cxd2841er_sleep_tc(struct dvb_frontend *fe)
+ 		case SYS_DVBT2:
+ 			cxd2841er_active_t2_to_sleep_tc(priv);
+ 			break;
++		case SYS_ISDBT:
++			cxd2841er_active_i_to_sleep_tc(priv);
++			break;
+ 		case SYS_DVBC_ANNEX_A:
+ 			cxd2841er_active_c_to_sleep_tc(priv);
+ 			break;
+@@ -2516,6 +3309,18 @@ static int cxd2841er_init_s(struct dvb_frontend *fe)
+ {
+ 	struct cxd2841er_priv *priv = fe->demodulator_priv;
+ 
++	/* sanity. force demod to SHUTDOWN state */
++	if (priv->state == STATE_SLEEP_S) {
++		dev_dbg(&priv->i2c->dev, "%s() forcing sleep->shutdown\n",
++				__func__);
++		cxd2841er_sleep_s_to_shutdown(priv);
++	} else if (priv->state == STATE_ACTIVE_S) {
++		dev_dbg(&priv->i2c->dev, "%s() forcing active->sleep->shutdown\n",
++				__func__);
++		cxd2841er_active_s_to_sleep_s(priv);
++		cxd2841er_sleep_s_to_shutdown(priv);
++	}
++
+ 	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
+ 	cxd2841er_shutdown_to_sleep_s(priv);
+ 	/* SONY_DEMOD_CONFIG_SAT_IFAGCNEG set to 1 */
+@@ -2544,6 +3349,7 @@ static int cxd2841er_init_tc(struct dvb_frontend *fe)
+ static struct dvb_frontend_ops cxd2841er_dvbs_s2_ops;
+ static struct dvb_frontend_ops cxd2841er_dvbt_t2_ops;
+ static struct dvb_frontend_ops cxd2841er_dvbc_ops;
++static struct dvb_frontend_ops cxd2841er_isdbt_ops;
+ 
+ static struct dvb_frontend *cxd2841er_attach(struct cxd2841er_config *cfg,
+ 					     struct i2c_adapter *i2c,
+@@ -2561,6 +3367,7 @@ static struct dvb_frontend *cxd2841er_attach(struct cxd2841er_config *cfg,
+ 	priv->config = cfg;
+ 	priv->i2c_addr_slvx = (cfg->i2c_addr + 4) >> 1;
+ 	priv->i2c_addr_slvt = (cfg->i2c_addr) >> 1;
++	priv->xtal = cfg->xtal;
+ 	/* create dvb_frontend */
+ 	switch (system) {
+ 	case SYS_DVBS:
+@@ -2575,6 +3382,12 @@ static struct dvb_frontend *cxd2841er_attach(struct cxd2841er_config *cfg,
+ 			sizeof(struct dvb_frontend_ops));
+ 		type = "T/T2";
+ 		break;
++	case SYS_ISDBT:
++		memcpy(&priv->frontend.ops,
++				&cxd2841er_isdbt_ops,
++				sizeof(struct dvb_frontend_ops));
++		type = "ISDBT";
++		break;
+ 	case SYS_DVBC_ANNEX_A:
+ 		memcpy(&priv->frontend.ops,
+ 			&cxd2841er_dvbc_ops,
+@@ -2594,7 +3407,7 @@ static struct dvb_frontend *cxd2841er_attach(struct cxd2841er_config *cfg,
+ 		__func__, priv->i2c,
+ 		priv->i2c_addr_slvx, priv->i2c_addr_slvt);
+ 	chip_id = cxd2841er_chip_id(priv);
+-	if (chip_id != CXD2841ER_CHIP_ID) {
++	if (chip_id != CXD2841ER_CHIP_ID && chip_id != CXD2854ER_CHIP_ID) {
+ 		dev_err(&priv->i2c->dev, "%s(): invalid chip ID 0x%02x\n",
+ 			__func__, chip_id);
+ 		priv->frontend.demodulator_priv = NULL;
+@@ -2620,6 +3433,13 @@ struct dvb_frontend *cxd2841er_attach_t(struct cxd2841er_config *cfg,
+ }
+ EXPORT_SYMBOL(cxd2841er_attach_t);
+ 
++struct dvb_frontend *cxd2841er_attach_i(struct cxd2841er_config *cfg,
++		struct i2c_adapter *i2c)
++{
++	return cxd2841er_attach(cfg, i2c, SYS_ISDBT);
++}
++EXPORT_SYMBOL(cxd2841er_attach_i);
++
+ struct dvb_frontend *cxd2841er_attach_c(struct cxd2841er_config *cfg,
+ 					struct i2c_adapter *i2c)
+ {
+@@ -2691,6 +3511,42 @@ static struct  dvb_frontend_ops cxd2841er_dvbt_t2_ops = {
+ 	.get_frontend_algo = cxd2841er_get_algo
+ };
+ 
++static struct  dvb_frontend_ops cxd2841er_isdbt_ops = {
++	.delsys = { SYS_ISDBT },
++	.info = {
++		.name	= "Sony CXD2854ER ISDBT demodulator",
++		.caps = FE_CAN_FEC_1_2 |
++			FE_CAN_FEC_2_3 |
++			FE_CAN_FEC_3_4 |
++			FE_CAN_FEC_5_6 |
++			FE_CAN_FEC_7_8 |
++			FE_CAN_FEC_AUTO |
++			FE_CAN_QPSK |
++			FE_CAN_QAM_16 |
++			FE_CAN_QAM_32 |
++			FE_CAN_QAM_64 |
++			FE_CAN_QAM_128 |
++			FE_CAN_QAM_256 |
++			FE_CAN_QAM_AUTO |
++			FE_CAN_TRANSMISSION_MODE_AUTO |
++			FE_CAN_GUARD_INTERVAL_AUTO |
++			FE_CAN_HIERARCHY_AUTO |
++			FE_CAN_MUTE_TS |
++			FE_CAN_2G_MODULATION,
++		.frequency_min = 42000000,
++		.frequency_max = 1002000000
++	},
++	.init = cxd2841er_init_tc,
++	.sleep = cxd2841er_sleep_tc,
++	.release = cxd2841er_release,
++	.set_frontend = cxd2841er_set_frontend_tc,
++	.get_frontend = cxd2841er_get_frontend,
++	.read_status = cxd2841er_read_status_tc,
++	.tune = cxd2841er_tune_tc,
++	.i2c_gate_ctrl = cxd2841er_i2c_gate_ctrl,
++	.get_frontend_algo = cxd2841er_get_algo
++};
++
+ static struct  dvb_frontend_ops cxd2841er_dvbc_ops = {
+ 	.delsys = { SYS_DVBC_ANNEX_A },
+ 	.info = {
+@@ -2722,6 +3578,6 @@ static struct  dvb_frontend_ops cxd2841er_dvbc_ops = {
+ 	.get_frontend_algo = cxd2841er_get_algo,
+ };
+ 
+-MODULE_DESCRIPTION("Sony CXD2841ER DVB-C/C2/T/T2/S/S2 demodulator driver");
+-MODULE_AUTHOR("Sergey Kozlov <serjk@netup.ru>");
++MODULE_DESCRIPTION("Sony CXD2841ER/CXD2854ER DVB-C/C2/T/T2/S/S2 demodulator driver");
++MODULE_AUTHOR("Sergey Kozlov <serjk@netup.ru>, Abylay Ospan <aospan@netup.ru>");
+ MODULE_LICENSE("GPL");
+diff --git a/drivers/media/dvb-frontends/cxd2841er.h b/drivers/media/dvb-frontends/cxd2841er.h
+index 3472bdd..9b0d2c1 100644
+--- a/drivers/media/dvb-frontends/cxd2841er.h
++++ b/drivers/media/dvb-frontends/cxd2841er.h
+@@ -25,8 +25,15 @@
+ #include <linux/kconfig.h>
+ #include <linux/dvb/frontend.h>
+ 
++enum cxd2841er_xtal {
++	SONY_XTAL_20500, /* 20.5 MHz */
++	SONY_XTAL_24000, /* 24 MHz */
++	SONY_XTAL_41000 /* 41 MHz */
++};
++
+ struct cxd2841er_config {
+ 	u8	i2c_addr;
++	enum cxd2841er_xtal	xtal;
+ };
+ 
+ #if IS_REACHABLE(CONFIG_DVB_CXD2841ER)
+@@ -38,28 +45,38 @@ extern struct dvb_frontend *cxd2841er_attach_t(struct cxd2841er_config *cfg,
+ 
+ extern struct dvb_frontend *cxd2841er_attach_c(struct cxd2841er_config *cfg,
+ 					       struct i2c_adapter *i2c);
++extern struct dvb_frontend *cxd2841er_attach_i(struct cxd2841er_config *cfg,
++		struct i2c_adapter *i2c);
+ #else
+ static inline struct dvb_frontend *cxd2841er_attach_s(
+ 					struct cxd2841er_config *cfg,
+ 					struct i2c_adapter *i2c)
+ {
+-	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
++	pr_warn("%s: driver disabled by Kconfig\n", __func__);
+ 	return NULL;
+ }
+ 
+ static inline struct dvb_frontend *cxd2841er_attach_t(
+ 		struct cxd2841er_config *cfg, struct i2c_adapter *i2c)
+ {
+-	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
++	pr_warn("%s: driver disabled by Kconfig\n", __func__);
+ 	return NULL;
+ }
+ 
+ static inline struct dvb_frontend *cxd2841er_attach_c(
+ 		struct cxd2841er_config *cfg, struct i2c_adapter *i2c)
+ {
+-	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
++	pr_warn("%s: driver disabled by Kconfig\n", __func__);
++	return NULL;
++}
++
++static inline struct dvb_frontend *cxd2841er_attach_i(
++		struct cxd2841er_config *cfg, struct i2c_adapter *i2c)
++{
++	pr_warn("%s: driver disabled by Kconfig\n", __func__);
+ 	return NULL;
+ }
++
+ #endif
+ 
+ #endif
+diff --git a/drivers/media/dvb-frontends/cxd2841er_priv.h b/drivers/media/dvb-frontends/cxd2841er_priv.h
+index 33e2f49..0bbce45 100644
+--- a/drivers/media/dvb-frontends/cxd2841er_priv.h
++++ b/drivers/media/dvb-frontends/cxd2841er_priv.h
+@@ -26,6 +26,7 @@
+ #define I2C_SLVT			1
+ 
+ #define CXD2841ER_CHIP_ID		0xa7
++#define CXD2854ER_CHIP_ID		0xc1
+ 
+ #define CXD2841ER_DVBS_POLLING_INVL	10
+ 
+diff --git a/drivers/media/dvb-frontends/helene.c b/drivers/media/dvb-frontends/helene.c
+new file mode 100644
+index 0000000..309f06d
+--- /dev/null
++++ b/drivers/media/dvb-frontends/helene.c
+@@ -0,0 +1,1042 @@
++/*
++ * helene.c
++ *
++ * Sony HELENE DVB-S/S2 DVB-T/T2 DVB-C/C2 ISDB-T/S tuner driver (CXD2858ER)
++ *
++ * Copyright 2012 Sony Corporation
++ * Copyright (C) 2014 NetUP Inc.
++ * Copyright (C) 2014 Abylay Ospan <aospan@netup.ru>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++  */
++
++#include <linux/slab.h>
++#include <linux/module.h>
++#include <linux/dvb/frontend.h>
++#include <linux/types.h>
++#include "helene.h"
++#include "dvb_frontend.h"
++
++#define MAX_WRITE_REGSIZE 20
++
++enum helene_state {
++	STATE_UNKNOWN,
++	STATE_SLEEP,
++	STATE_ACTIVE
++};
++
++struct helene_priv {
++	u32			frequency;
++	u8			i2c_address;
++	struct i2c_adapter	*i2c;
++	enum helene_state	state;
++	void			*set_tuner_data;
++	int			(*set_tuner)(void *, int);
++	enum helene_xtal xtal;
++};
++
++#define TERR_INTERNAL_LOOPFILTER_AVAILABLE(tv_system) \
++	(((tv_system) != SONY_HELENE_DTV_DVBC_6) && \
++	 ((tv_system) != SONY_HELENE_DTV_DVBC_8)\
++	 && ((tv_system) != SONY_HELENE_DTV_DVBC2_6) && \
++	 ((tv_system) != SONY_HELENE_DTV_DVBC2_8))
++
++#define HELENE_AUTO		0xff
++#define HELENE_OFFSET(ofs)	((u8)(ofs) & 0x1F)
++#define HELENE_BW_6		0x00
++#define HELENE_BW_7		0x01
++#define HELENE_BW_8		0x02
++#define HELENE_BW_1_7		0x03
++
++enum helene_tv_system_t {
++	SONY_HELENE_TV_SYSTEM_UNKNOWN,
++	/* Terrestrial Analog */
++	SONY_HELENE_ATV_MN_EIAJ,
++	/**< System-M (Japan) (IF: Fp=5.75MHz in default) */
++	SONY_HELENE_ATV_MN_SAP,
++	/**< System-M (US)    (IF: Fp=5.75MHz in default) */
++	SONY_HELENE_ATV_MN_A2,
++	/**< System-M (Korea) (IF: Fp=5.9MHz in default) */
++	SONY_HELENE_ATV_BG,
++	/**< System-B/G       (IF: Fp=7.3MHz in default) */
++	SONY_HELENE_ATV_I,
++	/**< System-I         (IF: Fp=7.85MHz in default) */
++	SONY_HELENE_ATV_DK,
++	/**< System-D/K       (IF: Fp=7.85MHz in default) */
++	SONY_HELENE_ATV_L,
++	/**< System-L         (IF: Fp=7.85MHz in default) */
++	SONY_HELENE_ATV_L_DASH,
++	/**< System-L DASH    (IF: Fp=2.2MHz in default) */
++	/* Terrestrial/Cable Digital */
++	SONY_HELENE_DTV_8VSB,
++	/**< ATSC 8VSB        (IF: Fc=3.7MHz in default) */
++	SONY_HELENE_DTV_QAM,
++	/**< US QAM           (IF: Fc=3.7MHz in default) */
++	SONY_HELENE_DTV_ISDBT_6,
++	/**< ISDB-T 6MHzBW    (IF: Fc=3.55MHz in default) */
++	SONY_HELENE_DTV_ISDBT_7,
++	/**< ISDB-T 7MHzBW    (IF: Fc=4.15MHz in default) */
++	SONY_HELENE_DTV_ISDBT_8,
++	/**< ISDB-T 8MHzBW    (IF: Fc=4.75MHz in default) */
++	SONY_HELENE_DTV_DVBT_5,
++	/**< DVB-T 5MHzBW     (IF: Fc=3.6MHz in default) */
++	SONY_HELENE_DTV_DVBT_6,
++	/**< DVB-T 6MHzBW     (IF: Fc=3.6MHz in default) */
++	SONY_HELENE_DTV_DVBT_7,
++	/**< DVB-T 7MHzBW     (IF: Fc=4.2MHz in default) */
++	SONY_HELENE_DTV_DVBT_8,
++	/**< DVB-T 8MHzBW     (IF: Fc=4.8MHz in default) */
++	SONY_HELENE_DTV_DVBT2_1_7,
++	/**< DVB-T2 1.7MHzBW  (IF: Fc=3.5MHz in default) */
++	SONY_HELENE_DTV_DVBT2_5,
++	/**< DVB-T2 5MHzBW    (IF: Fc=3.6MHz in default) */
++	SONY_HELENE_DTV_DVBT2_6,
++	/**< DVB-T2 6MHzBW    (IF: Fc=3.6MHz in default) */
++	SONY_HELENE_DTV_DVBT2_7,
++	/**< DVB-T2 7MHzBW    (IF: Fc=4.2MHz in default) */
++	SONY_HELENE_DTV_DVBT2_8,
++	/**< DVB-T2 8MHzBW    (IF: Fc=4.8MHz in default) */
++	SONY_HELENE_DTV_DVBC_6,
++	/**< DVB-C 6MHzBW     (IF: Fc=3.7MHz in default) */
++	SONY_HELENE_DTV_DVBC_8,
++	/**< DVB-C 8MHzBW     (IF: Fc=4.9MHz in default) */
++	SONY_HELENE_DTV_DVBC2_6,
++	/**< DVB-C2 6MHzBW    (IF: Fc=3.7MHz in default) */
++	SONY_HELENE_DTV_DVBC2_8,
++	/**< DVB-C2 8MHzBW    (IF: Fc=4.9MHz in default) */
++	SONY_HELENE_DTV_DTMB,
++	/**< DTMB             (IF: Fc=5.1MHz in default) */
++	/* Satellite */
++	SONY_HELENE_STV_ISDBS,
++	/**< ISDB-S */
++	SONY_HELENE_STV_DVBS,
++	/**< DVB-S */
++	SONY_HELENE_STV_DVBS2,
++	/**< DVB-S2 */
++
++	SONY_HELENE_ATV_MIN = SONY_HELENE_ATV_MN_EIAJ,
++	/**< Minimum analog terrestrial system */
++	SONY_HELENE_ATV_MAX = SONY_HELENE_ATV_L_DASH,
++	/**< Maximum analog terrestrial system */
++	SONY_HELENE_DTV_MIN = SONY_HELENE_DTV_8VSB,
++	/**< Minimum digital terrestrial system */
++	SONY_HELENE_DTV_MAX = SONY_HELENE_DTV_DTMB,
++	/**< Maximum digital terrestrial system */
++	SONY_HELENE_TERR_TV_SYSTEM_NUM,
++	/**< Number of supported terrestrial broadcasting system */
++	SONY_HELENE_STV_MIN = SONY_HELENE_STV_ISDBS,
++	/**< Minimum satellite system */
++	SONY_HELENE_STV_MAX = SONY_HELENE_STV_DVBS2
++	/**< Maximum satellite system */
++};
++
++struct helene_terr_adjust_param_t {
++	/* < Addr:0x69 Bit[6:4] : RFVGA gain.
++	 * 0xFF means Auto. (RF_GAIN_SEL = 1)
++	 */
++	uint8_t RF_GAIN;
++	/* < Addr:0x69 Bit[3:0] : IF_BPF gain.
++	*/
++	uint8_t IF_BPF_GC;
++	/* < Addr:0x6B Bit[3:0] : RF overload
++	 * RF input detect level. (FRF <= 172MHz)
++	*/
++	uint8_t RFOVLD_DET_LV1_VL;
++	/* < Addr:0x6B Bit[3:0] : RF overload
++	 * RF input detect level. (172MHz < FRF <= 464MHz)
++	*/
++	uint8_t RFOVLD_DET_LV1_VH;
++	/* < Addr:0x6B Bit[3:0] : RF overload
++	 * RF input detect level. (FRF > 464MHz)
++	*/
++	uint8_t RFOVLD_DET_LV1_U;
++	/* < Addr:0x6C Bit[2:0] :
++	 * Internal RFAGC detect level. (FRF <= 172MHz)
++	*/
++	uint8_t IFOVLD_DET_LV_VL;
++	/* < Addr:0x6C Bit[2:0] :
++	 * Internal RFAGC detect level. (172MHz < FRF <= 464MHz)
++	*/
++	uint8_t IFOVLD_DET_LV_VH;
++	/* < Addr:0x6C Bit[2:0] :
++	 * Internal RFAGC detect level. (FRF > 464MHz)
++	*/
++	uint8_t IFOVLD_DET_LV_U;
++	/* < Addr:0x6D Bit[5:4] :
++	 * IF filter center offset.
++	*/
++	uint8_t IF_BPF_F0;
++	/* < Addr:0x6D Bit[1:0] :
++	 * 6MHzBW(0x00) or 7MHzBW(0x01)
++	 * or 8MHzBW(0x02) or 1.7MHzBW(0x03)
++	*/
++	uint8_t BW;
++	/* < Addr:0x6E Bit[4:0] :
++	 * 5bit signed. IF offset (kHz) = FIF_OFFSET x 50
++	*/
++	uint8_t FIF_OFFSET;
++	/* < Addr:0x6F Bit[4:0] :
++	 * 5bit signed. BW offset (kHz) =
++	 * BW_OFFSET x 50 (BW_OFFSET x 10 in 1.7MHzBW)
++	*/
++	uint8_t BW_OFFSET;
++	/* < Addr:0x9C Bit[0]   :
++	 * Local polarity. (0: Upper Local, 1: Lower Local)
++	*/
++	uint8_t IS_LOWERLOCAL;
++};
++
++static const struct helene_terr_adjust_param_t
++terr_params[SONY_HELENE_TERR_TV_SYSTEM_NUM] = {
++	/*< SONY_HELENE_TV_SYSTEM_UNKNOWN */
++	{HELENE_AUTO, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++		HELENE_BW_6, HELENE_OFFSET(0),  HELENE_OFFSET(0),  0x00},
++	/* Analog */
++	/**< SONY_HELENE_ATV_MN_EIAJ   (System-M (Japan)) */
++	{HELENE_AUTO, 0x05, 0x03, 0x06, 0x03, 0x01, 0x01, 0x01, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(0),  HELENE_OFFSET(1),  0x00},
++	/**< SONY_HELENE_ATV_MN_SAP    (System-M (US)) */
++	{HELENE_AUTO, 0x05, 0x03, 0x06, 0x03, 0x01, 0x01, 0x01, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(0),  HELENE_OFFSET(1),  0x00},
++	{HELENE_AUTO, 0x05, 0x03, 0x06, 0x03, 0x01, 0x01, 0x01, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(3),  HELENE_OFFSET(1),  0x00},
++	/**< SONY_HELENE_ATV_MN_A2     (System-M (Korea)) */
++	{HELENE_AUTO, 0x05, 0x03, 0x06, 0x03, 0x01, 0x01, 0x01, 0x00,
++		HELENE_BW_7,  HELENE_OFFSET(11), HELENE_OFFSET(5),  0x00},
++	/**< SONY_HELENE_ATV_BG        (System-B/G) */
++	{HELENE_AUTO, 0x05, 0x03, 0x06, 0x03, 0x01, 0x01, 0x01, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(2),  HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_ATV_I         (System-I) */
++	{HELENE_AUTO, 0x05, 0x03, 0x06, 0x03, 0x01, 0x01, 0x01, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(2),  HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_ATV_DK        (System-D/K) */
++	{HELENE_AUTO, 0x03, 0x04, 0x0A, 0x04, 0x04, 0x04, 0x04, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(2),  HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_ATV_L         (System-L) */
++	{HELENE_AUTO, 0x03, 0x04, 0x0A, 0x04, 0x04, 0x04, 0x04, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(-1), HELENE_OFFSET(4),  0x00},
++	/**< SONY_HELENE_ATV_L_DASH    (System-L DASH) */
++	/* Digital */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x03, 0x03, 0x03, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-6), HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_DTV_8VSB      (ATSC 8VSB) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-6), HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_DTV_QAM       (US QAM) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-9), HELENE_OFFSET(-5), 0x00},
++	/**< SONY_HELENE_DTV_ISDBT_6   (ISDB-T 6MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_7,  HELENE_OFFSET(-7), HELENE_OFFSET(-6), 0x00},
++	/**< SONY_HELENE_DTV_ISDBT_7   (ISDB-T 7MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(-5), HELENE_OFFSET(-7), 0x00},
++	/**< SONY_HELENE_DTV_ISDBT_8   (ISDB-T 8MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-8), HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_DTV_DVBT_5    (DVB-T 5MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-8), HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_DTV_DVBT_6    (DVB-T 6MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_7,  HELENE_OFFSET(-6), HELENE_OFFSET(-5), 0x00},
++	/**< SONY_HELENE_DTV_DVBT_7    (DVB-T 7MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(-4), HELENE_OFFSET(-6), 0x00},
++	/**< SONY_HELENE_DTV_DVBT_8    (DVB-T 8MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_1_7, HELENE_OFFSET(-10), HELENE_OFFSET(-10), 0x00},
++	/**< SONY_HELENE_DTV_DVBT2_1_7 (DVB-T2 1.7MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-8), HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_DTV_DVBT2_5   (DVB-T2 5MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-8), HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_DTV_DVBT2_6   (DVB-T2 6MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_7,  HELENE_OFFSET(-6), HELENE_OFFSET(-5), 0x00},
++	/**< SONY_HELENE_DTV_DVBT2_7   (DVB-T2 7MHzBW) */
++	{HELENE_AUTO, 0x09, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(-4), HELENE_OFFSET(-6), 0x00},
++	/**< SONY_HELENE_DTV_DVBT2_8   (DVB-T2 8MHzBW) */
++	{HELENE_AUTO, 0x05, 0x02, 0x02, 0x02, 0x01, 0x01, 0x01, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-6), HELENE_OFFSET(-4), 0x00},
++	/**< SONY_HELENE_DTV_DVBC_6    (DVB-C 6MHzBW) */
++	{HELENE_AUTO, 0x05, 0x02, 0x02, 0x02, 0x01, 0x01, 0x01, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(-2), HELENE_OFFSET(-3), 0x00},
++	/**< SONY_HELENE_DTV_DVBC_8    (DVB-C 8MHzBW) */
++	{HELENE_AUTO, 0x03, 0x09, 0x09, 0x09, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_6,  HELENE_OFFSET(-6), HELENE_OFFSET(-2), 0x00},
++	/**< SONY_HELENE_DTV_DVBC2_6   (DVB-C2 6MHzBW) */
++	{HELENE_AUTO, 0x03, 0x09, 0x09, 0x09, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(-2), HELENE_OFFSET(0),  0x00},
++	/**< SONY_HELENE_DTV_DVBC2_8   (DVB-C2 8MHzBW) */
++	{HELENE_AUTO, 0x04, 0x0B, 0x0B, 0x0B, 0x02, 0x02, 0x02, 0x00,
++		HELENE_BW_8,  HELENE_OFFSET(2),  HELENE_OFFSET(1),  0x00}
++	/**< SONY_HELENE_DTV_DTMB      (DTMB) */
++};
++
++static void helene_i2c_debug(struct helene_priv *priv,
++		u8 reg, u8 write, const u8 *data, u32 len)
++{
++	dev_dbg(&priv->i2c->dev, "helene: I2C %s reg 0x%02x size %d\n",
++			(write == 0 ? "read" : "write"), reg, len);
++	print_hex_dump_bytes("helene: I2C data: ",
++			DUMP_PREFIX_OFFSET, data, len);
++}
++
++static int helene_write_regs(struct helene_priv *priv,
++		u8 reg, const u8 *data, u32 len)
++{
++	int ret;
++	u8 buf[MAX_WRITE_REGSIZE + 1];
++	struct i2c_msg msg[1] = {
++		{
++			.addr = priv->i2c_address,
++			.flags = 0,
++			.len = len + 1,
++			.buf = buf,
++		}
++	};
++
++	if (len + 1 > sizeof(buf)) {
++		dev_warn(&priv->i2c->dev,
++				"wr reg=%04x: len=%d vs %lu is too big!\n",
++				reg, len + 1, sizeof(buf));
++		return -E2BIG;
++	}
++
++	helene_i2c_debug(priv, reg, 1, data, len);
++	buf[0] = reg;
++	memcpy(&buf[1], data, len);
++	ret = i2c_transfer(priv->i2c, msg, 1);
++	if (ret >= 0 && ret != 1)
++		ret = -EREMOTEIO;
++	if (ret < 0) {
++		dev_warn(&priv->i2c->dev,
++				"%s: i2c wr failed=%d reg=%02x len=%d\n",
++				KBUILD_MODNAME, ret, reg, len);
++		return ret;
++	}
++	return 0;
++}
++
++static int helene_write_reg(struct helene_priv *priv, u8 reg, u8 val)
++{
++	return helene_write_regs(priv, reg, &val, 1);
++}
++
++static int helene_read_regs(struct helene_priv *priv,
++		u8 reg, u8 *val, u32 len)
++{
++	int ret;
++	struct i2c_msg msg[2] = {
++		{
++			.addr = priv->i2c_address,
++			.flags = 0,
++			.len = 1,
++			.buf = &reg,
++		}, {
++			.addr = priv->i2c_address,
++			.flags = I2C_M_RD,
++			.len = len,
++			.buf = val,
++		}
++	};
++
++	ret = i2c_transfer(priv->i2c, &msg[0], 1);
++	if (ret >= 0 && ret != 1)
++		ret = -EREMOTEIO;
++	if (ret < 0) {
++		dev_warn(&priv->i2c->dev,
++				"%s: I2C rw failed=%d addr=%02x reg=%02x\n",
++				KBUILD_MODNAME, ret, priv->i2c_address, reg);
++		return ret;
++	}
++	ret = i2c_transfer(priv->i2c, &msg[1], 1);
++	if (ret >= 0 && ret != 1)
++		ret = -EREMOTEIO;
++	if (ret < 0) {
++		dev_warn(&priv->i2c->dev,
++				"%s: i2c rd failed=%d addr=%02x reg=%02x\n",
++				KBUILD_MODNAME, ret, priv->i2c_address, reg);
++		return ret;
++	}
++	helene_i2c_debug(priv, reg, 0, val, len);
++	return 0;
++}
++
++static int helene_read_reg(struct helene_priv *priv, u8 reg, u8 *val)
++{
++	return helene_read_regs(priv, reg, val, 1);
++}
++
++static int helene_set_reg_bits(struct helene_priv *priv,
++		u8 reg, u8 data, u8 mask)
++{
++	int res;
++	u8 rdata;
++
++	if (mask != 0xff) {
++		res = helene_read_reg(priv, reg, &rdata);
++		if (res != 0)
++			return res;
++		data = ((data & mask) | (rdata & (mask ^ 0xFF)));
++	}
++	return helene_write_reg(priv, reg, data);
++}
++
++static int helene_enter_power_save(struct helene_priv *priv)
++{
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	if (priv->state == STATE_SLEEP)
++		return 0;
++
++	/* Standby setting for CPU */
++	helene_write_reg(priv, 0x88, 0x0);
++
++	/* Standby setting for internal logic block */
++	helene_write_reg(priv, 0x87, 0xC0);
++
++	priv->state = STATE_SLEEP;
++	return 0;
++}
++
++static int helene_leave_power_save(struct helene_priv *priv)
++{
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	if (priv->state == STATE_ACTIVE)
++		return 0;
++
++	/* Standby setting for internal logic block */
++	helene_write_reg(priv, 0x87, 0xC4);
++
++	/* Standby setting for CPU */
++	helene_write_reg(priv, 0x88, 0x40);
++
++	priv->state = STATE_ACTIVE;
++	return 0;
++}
++
++static int helene_init(struct dvb_frontend *fe)
++{
++	struct helene_priv *priv = fe->tuner_priv;
++
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	return helene_leave_power_save(priv);
++}
++
++static int helene_release(struct dvb_frontend *fe)
++{
++	struct helene_priv *priv = fe->tuner_priv;
++
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	kfree(fe->tuner_priv);
++	fe->tuner_priv = NULL;
++	return 0;
++}
++
++static int helene_sleep(struct dvb_frontend *fe)
++{
++	struct helene_priv *priv = fe->tuner_priv;
++
++	dev_dbg(&priv->i2c->dev, "%s()\n", __func__);
++	helene_enter_power_save(priv);
++	return 0;
++}
++
++static enum helene_tv_system_t helene_get_tv_system(struct dvb_frontend *fe)
++{
++	enum helene_tv_system_t system = SONY_HELENE_TV_SYSTEM_UNKNOWN;
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
++	struct helene_priv *priv = fe->tuner_priv;
++
++	if (p->delivery_system == SYS_DVBT) {
++		if (p->bandwidth_hz <= 5000000)
++			system = SONY_HELENE_DTV_DVBT_5;
++		else if (p->bandwidth_hz <= 6000000)
++			system = SONY_HELENE_DTV_DVBT_6;
++		else if (p->bandwidth_hz <= 7000000)
++			system = SONY_HELENE_DTV_DVBT_7;
++		else if (p->bandwidth_hz <= 8000000)
++			system = SONY_HELENE_DTV_DVBT_8;
++		else {
++			system = SONY_HELENE_DTV_DVBT_8;
++			p->bandwidth_hz = 8000000;
++		}
++	} else if (p->delivery_system == SYS_DVBT2) {
++		if (p->bandwidth_hz <= 5000000)
++			system = SONY_HELENE_DTV_DVBT2_5;
++		else if (p->bandwidth_hz <= 6000000)
++			system = SONY_HELENE_DTV_DVBT2_6;
++		else if (p->bandwidth_hz <= 7000000)
++			system = SONY_HELENE_DTV_DVBT2_7;
++		else if (p->bandwidth_hz <= 8000000)
++			system = SONY_HELENE_DTV_DVBT2_8;
++		else {
++			system = SONY_HELENE_DTV_DVBT2_8;
++			p->bandwidth_hz = 8000000;
++		}
++	} else if (p->delivery_system == SYS_DVBS) {
++		system = SONY_HELENE_STV_DVBS;
++	} else if (p->delivery_system == SYS_DVBS2) {
++		system = SONY_HELENE_STV_DVBS2;
++	} else if (p->delivery_system == SYS_ISDBS) {
++		system = SONY_HELENE_STV_ISDBS;
++	} else if (p->delivery_system == SYS_ISDBT) {
++		if (p->bandwidth_hz <= 6000000)
++			system = SONY_HELENE_DTV_ISDBT_6;
++		else if (p->bandwidth_hz <= 7000000)
++			system = SONY_HELENE_DTV_ISDBT_7;
++		else if (p->bandwidth_hz <= 8000000)
++			system = SONY_HELENE_DTV_ISDBT_8;
++		else {
++			system = SONY_HELENE_DTV_ISDBT_8;
++			p->bandwidth_hz = 8000000;
++		}
++	} else if (p->delivery_system == SYS_DVBC_ANNEX_A) {
++		if (p->bandwidth_hz <= 6000000)
++			system = SONY_HELENE_DTV_DVBC_6;
++		else if (p->bandwidth_hz <= 8000000)
++			system = SONY_HELENE_DTV_DVBC_8;
++	}
++	dev_dbg(&priv->i2c->dev,
++			"%s(): HELENE DTV system %d (delsys %d, bandwidth %d)\n",
++			__func__, (int)system, p->delivery_system,
++			p->bandwidth_hz);
++	return system;
++}
++
++static int helene_set_params_s(struct dvb_frontend *fe)
++{
++	u8 data[MAX_WRITE_REGSIZE];
++	u32 frequency;
++	enum helene_tv_system_t tv_system;
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
++	struct helene_priv *priv = fe->tuner_priv;
++	int frequencykHz = p->frequency;
++	uint32_t frequency4kHz = 0;
++	u32 symbol_rate = p->symbol_rate/1000;
++
++	dev_dbg(&priv->i2c->dev, "%s(): tune frequency %dkHz sr=%uKsps\n",
++			__func__, frequencykHz, symbol_rate);
++	tv_system = helene_get_tv_system(fe);
++
++	if (tv_system == SONY_HELENE_TV_SYSTEM_UNKNOWN) {
++		dev_err(&priv->i2c->dev, "%s(): unknown DTV system\n",
++				__func__);
++		return -EINVAL;
++	}
++	/* RF switch turn to satellite */
++	if (priv->set_tuner)
++		priv->set_tuner(priv->set_tuner_data, 0);
++	frequency = roundup(p->frequency / 1000, 1);
++
++	/* Disable IF signal output */
++	helene_write_reg(priv, 0x15, 0x02);
++
++	/* RFIN matching in power save (Sat) reset */
++	helene_write_reg(priv, 0x43, 0x06);
++
++	/* Analog block setting (0x6A, 0x6B) */
++	data[0] = 0x00;
++	data[1] = 0x00;
++	helene_write_regs(priv, 0x6A, data, 2);
++	helene_write_reg(priv, 0x75, 0x99);
++	helene_write_reg(priv, 0x9D, 0x00);
++
++	/* Tuning setting for CPU (0x61) */
++	helene_write_reg(priv, 0x61, 0x07);
++
++	/* Satellite mode select (0x01) */
++	helene_write_reg(priv, 0x01, 0x01);
++
++	/* Clock enable for internal logic block, CPU wake-up (0x04, 0x05) */
++	data[0] = 0xC4;
++	data[1] = 0x40;
++
++	switch (priv->xtal) {
++	case SONY_HELENE_XTAL_16000:
++		data[2] = 0x02;
++		break;
++	case SONY_HELENE_XTAL_20500:
++		data[2] = 0x02;
++		break;
++	case SONY_HELENE_XTAL_24000:
++		data[2] = 0x03;
++		break;
++	case SONY_HELENE_XTAL_41000:
++		data[2] = 0x05;
++		break;
++	default:
++		dev_err(&priv->i2c->dev, "%s(): unknown xtal %d\n",
++				__func__, priv->xtal);
++		return -EINVAL;
++	}
++
++	/* Setting for analog block (0x07). LOOPFILTER INTERNAL */
++	data[3] = 0x80;
++
++	/* Tuning setting for analog block
++	 * (0x08, 0x09, 0x0A, 0x0B). LOOPFILTER INTERNAL
++	*/
++	if (priv->xtal == SONY_HELENE_XTAL_20500)
++		data[4] = 0x58;
++	else
++		data[4] = 0x70;
++
++	data[5] = 0x1E;
++	data[6] = 0x02;
++	data[7] = 0x24;
++
++	/* Enable for analog block (0x0C, 0x0D, 0x0E). SAT LNA ON */
++	data[8] = 0x0F;
++	data[8] |= 0xE0; /* POWERSAVE_TERR_RF_ACTIVE */
++	data[9]  = 0x02;
++	data[10] = 0x1E;
++
++	/* Setting for LPF cutoff frequency (0x0F) */
++	switch (tv_system) {
++	case SONY_HELENE_STV_ISDBS:
++		data[11] = 0x22; /* 22MHz */
++		break;
++	case SONY_HELENE_STV_DVBS:
++		if (symbol_rate <= 4000)
++			data[11] = 0x05;
++		else if (symbol_rate <= 10000)
++			data[11] = (uint8_t)((symbol_rate * 47
++						+ (40000-1)) / 40000);
++		else
++			data[11] = (uint8_t)((symbol_rate * 27
++						+ (40000-1)) / 40000 + 5);
++
++		if (data[11] > 36)
++			data[11] = 36; /* 5 <= lpf_cutoff <= 36 is valid */
++		break;
++	case SONY_HELENE_STV_DVBS2:
++		if (symbol_rate <= 4000)
++			data[11] = 0x05;
++		else if (symbol_rate <= 10000)
++			data[11] = (uint8_t)((symbol_rate * 11
++						+ (10000-1)) / 10000);
++		else
++			data[11] = (uint8_t)((symbol_rate * 3
++						+ (5000-1)) / 5000 + 5);
++
++		if (data[11] > 36)
++			data[11] = 36; /* 5 <= lpf_cutoff <= 36 is valid */
++		break;
++	default:
++		dev_err(&priv->i2c->dev, "%s(): unknown standart %d\n",
++				__func__, tv_system);
++		return -EINVAL;
++	}
++
++	/* RF tuning frequency setting (0x10, 0x11, 0x12) */
++	frequency4kHz = (frequencykHz + 2) / 4;
++	data[12] = (uint8_t)(frequency4kHz & 0xFF);         /* FRF_L */
++	data[13] = (uint8_t)((frequency4kHz >> 8) & 0xFF);  /* FRF_M */
++	/* FRF_H (bit[3:0]) */
++	data[14] = (uint8_t)((frequency4kHz >> 16) & 0x0F);
++
++	/* Tuning command (0x13) */
++	data[15] = 0xFF;
++
++	/* Setting for IQOUT_LIMIT (0x14) 0.75Vpp */
++	data[16] = 0x00;
++
++	/* Enable IQ output (0x15) */
++	data[17] = 0x01;
++
++	helene_write_regs(priv, 0x04, data, 18);
++
++	dev_dbg(&priv->i2c->dev, "%s(): tune done\n",
++			__func__);
++
++	priv->frequency = frequency;
++	return 0;
++}
++
++static int helene_set_params(struct dvb_frontend *fe)
++{
++	u8 data[MAX_WRITE_REGSIZE];
++	u32 frequency;
++	enum helene_tv_system_t tv_system;
++	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
++	struct helene_priv *priv = fe->tuner_priv;
++	int frequencykHz = p->frequency / 1000;
++
++	dev_dbg(&priv->i2c->dev, "%s(): tune frequency %dkHz\n",
++			__func__, frequencykHz);
++	tv_system = helene_get_tv_system(fe);
++
++	if (tv_system == SONY_HELENE_TV_SYSTEM_UNKNOWN) {
++		dev_dbg(&priv->i2c->dev, "%s(): unknown DTV system\n",
++				__func__);
++		return -EINVAL;
++	}
++	if (priv->set_tuner)
++		priv->set_tuner(priv->set_tuner_data, 1);
++	frequency = roundup(p->frequency / 1000, 25);
++
++	/* mode select */
++	helene_write_reg(priv, 0x01, 0x00);
++
++	/* Disable IF signal output */
++	helene_write_reg(priv, 0x74, 0x02);
++
++	if (priv->state == STATE_SLEEP)
++		helene_leave_power_save(priv);
++
++	/* Initial setting for internal analog block (0x91, 0x92) */
++	if ((tv_system == SONY_HELENE_DTV_DVBC_6) ||
++			(tv_system == SONY_HELENE_DTV_DVBC_8)) {
++		data[0] = 0x16;
++		data[1] = 0x26;
++	} else {
++		data[0] = 0x10;
++		data[1] = 0x20;
++	}
++	helene_write_regs(priv, 0x91, data, 2);
++
++	/* Setting for analog block */
++	if (TERR_INTERNAL_LOOPFILTER_AVAILABLE(tv_system))
++		data[0] = 0x90;
++	else
++		data[0] = 0x00;
++
++	/* Setting for local polarity (0x9D) */
++	data[1] = (uint8_t)(terr_params[tv_system].IS_LOWERLOCAL & 0x01);
++	helene_write_regs(priv, 0x9C, data, 2);
++
++	/* Enable for analog block */
++	data[0] = 0xEE;
++	data[1] = 0x02;
++	data[2] = 0x1E;
++	data[3] = 0x67; /* Tuning setting for CPU */
++
++	/* Setting for PLL reference divider for xtal=24MHz */
++	if ((tv_system == SONY_HELENE_DTV_DVBC_6) ||
++			(tv_system == SONY_HELENE_DTV_DVBC_8))
++		data[4] = 0x18;
++	else
++		data[4] = 0x03;
++
++	/* Tuning setting for analog block */
++	if (TERR_INTERNAL_LOOPFILTER_AVAILABLE(tv_system)) {
++		data[5] = 0x38;
++		data[6] = 0x1E;
++		data[7] = 0x02;
++		data[8] = 0x24;
++	} else if ((tv_system == SONY_HELENE_DTV_DVBC_6) ||
++			(tv_system == SONY_HELENE_DTV_DVBC_8)) {
++		data[5] = 0x1C;
++		data[6] = 0x78;
++		data[7] = 0x08;
++		data[8] = 0x1C;
++	} else {
++		data[5] = 0xB4;
++		data[6] = 0x78;
++		data[7] = 0x08;
++		data[8] = 0x30;
++	};
++	helene_write_regs(priv, 0x5E, data, 9);
++
++	/* LT_AMP_EN should be 0 */
++	helene_set_reg_bits(priv, 0x67, 0x0, 0x02);
++
++	/* Setting for IFOUT_LIMIT */
++	data[0] = 0x00; /* 1.5Vpp */
++
++	/* RF_GAIN setting */
++	if (terr_params[tv_system].RF_GAIN == HELENE_AUTO)
++		data[1] = 0x80; /* RF_GAIN_SEL = 1 */
++	else
++		data[1] = (uint8_t)((terr_params[tv_system].RF_GAIN
++					<< 4) & 0x70);
++
++	/* IF_BPF_GC setting */
++	data[1] |= (uint8_t)(terr_params[tv_system].IF_BPF_GC & 0x0F);
++
++	/* Setting for internal RFAGC (0x6A, 0x6B, 0x6C) */
++	data[2] = 0x00;
++	if (frequencykHz <= 172000) {
++		data[3] = (uint8_t)(terr_params[tv_system].RFOVLD_DET_LV1_VL
++				& 0x0F);
++		data[4] = (uint8_t)(terr_params[tv_system].IFOVLD_DET_LV_VL
++				& 0x07);
++	} else if (frequencykHz <= 464000) {
++		data[3] = (uint8_t)(terr_params[tv_system].RFOVLD_DET_LV1_VH
++				& 0x0F);
++		data[4] = (uint8_t)(terr_params[tv_system].IFOVLD_DET_LV_VH
++				& 0x07);
++	} else {
++		data[3] = (uint8_t)(terr_params[tv_system].RFOVLD_DET_LV1_U
++				& 0x0F);
++		data[4] = (uint8_t)(terr_params[tv_system].IFOVLD_DET_LV_U
++				& 0x07);
++	}
++	data[4] |= 0x20;
++
++	/* Setting for IF frequency and bandwidth */
++
++	/* IF filter center frequency offset (IF_BPF_F0) (0x6D) */
++	data[5] = (uint8_t)((terr_params[tv_system].IF_BPF_F0 << 4) & 0x30);
++
++	/* IF filter band width (BW) (0x6D) */
++	data[5] |= (uint8_t)(terr_params[tv_system].BW & 0x03);
++
++	/* IF frequency offset value (FIF_OFFSET) (0x6E) */
++	data[6] = (uint8_t)(terr_params[tv_system].FIF_OFFSET & 0x1F);
++
++	/* IF band width offset value (BW_OFFSET) (0x6F) */
++	data[7] = (uint8_t)(terr_params[tv_system].BW_OFFSET & 0x1F);
++
++	/* RF tuning frequency setting (0x70, 0x71, 0x72) */
++	data[8]  = (uint8_t)(frequencykHz & 0xFF);         /* FRF_L */
++	data[9]  = (uint8_t)((frequencykHz >> 8) & 0xFF);  /* FRF_M */
++	data[10] = (uint8_t)((frequencykHz >> 16)
++			& 0x0F); /* FRF_H (bit[3:0]) */
++
++	/* Tuning command */
++	data[11] = 0xFF;
++
++	/* Enable IF output, AGC and IFOUT pin selection (0x74) */
++	data[12] = 0x01;
++
++	if ((tv_system == SONY_HELENE_DTV_DVBC_6) ||
++			(tv_system == SONY_HELENE_DTV_DVBC_8)) {
++		data[13] = 0xD9;
++		data[14] = 0x0F;
++		data[15] = 0x24;
++		data[16] = 0x87;
++	} else {
++		data[13] = 0x99;
++		data[14] = 0x00;
++		data[15] = 0x24;
++		data[16] = 0x87;
++	}
++
++	helene_write_regs(priv, 0x68, data, 17);
++
++	dev_dbg(&priv->i2c->dev, "%s(): tune done\n",
++			__func__);
++
++	priv->frequency = frequency;
++	return 0;
++}
++
++static int helene_get_frequency(struct dvb_frontend *fe, u32 *frequency)
++{
++	struct helene_priv *priv = fe->tuner_priv;
++
++	*frequency = priv->frequency * 1000;
++	return 0;
++}
++
++static struct dvb_tuner_ops helene_tuner_ops = {
++	.info = {
++		.name = "Sony HELENE Ter tuner",
++		.frequency_min = 1000000,
++		.frequency_max = 1200000000,
++		.frequency_step = 25000,
++	},
++	.init = helene_init,
++	.release = helene_release,
++	.sleep = helene_sleep,
++	.set_params = helene_set_params,
++	.get_frequency = helene_get_frequency,
++};
++
++static struct dvb_tuner_ops helene_tuner_ops_s = {
++	.info = {
++		.name = "Sony HELENE Sat tuner",
++		.frequency_min = 500000,
++		.frequency_max = 2500000,
++		.frequency_step = 1000,
++	},
++	.init = helene_init,
++	.release = helene_release,
++	.sleep = helene_sleep,
++	.set_params = helene_set_params_s,
++	.get_frequency = helene_get_frequency,
++};
++
++/* power-on tuner
++ * call once after reset
++ */
++static int helene_x_pon(struct helene_priv *priv)
++{
++	/* RFIN matching in power save (terrestrial) = ACTIVE */
++	/* RFIN matching in power save (satellite) = ACTIVE */
++	u8 dataT[] = { 0x06, 0x00, 0x02, 0x00 };
++	/* SAT_RF_ACTIVE = true, lnaOff = false, terrRfActive = true */
++	u8 dataS[] = { 0x05, 0x06 };
++	u8 cdata[] = {0x7A, 0x01};
++	u8 data[20];
++	u8 rdata[2];
++
++	/* mode select */
++	helene_write_reg(priv, 0x01, 0x00);
++
++	helene_write_reg(priv, 0x67, dataT[3]);
++	helene_write_reg(priv, 0x43, dataS[1]);
++	helene_write_regs(priv, 0x5E, dataT, 3);
++	helene_write_reg(priv, 0x0C, dataS[0]);
++
++	/* Initial setting for internal logic block */
++	helene_write_regs(priv, 0x99, cdata, sizeof(cdata));
++
++	/* 0x81 - 0x94 */
++	data[0] = 0x18; /* xtal 24 MHz */
++	data[1] = (uint8_t)(0x80 | (0x04 & 0x1F)); /* 4 x 25 = 100uA */
++	data[2] = (uint8_t)(0x80 | (0x26 & 0x7F)); /* 38 x 0.25 = 9.5pF */
++	data[3] = 0x80; /* REFOUT signal output 500mVpp */
++	data[4] = 0x00; /* GPIO settings */
++	data[5] = 0x00; /* GPIO settings */
++	data[6] = 0xC4; /* Clock enable for internal logic block */
++	data[7] = 0x40; /* Start CPU boot-up */
++	data[8] = 0x10; /* For burst-write */
++
++	/* Setting for internal RFAGC */
++	data[9] = 0x00;
++	data[10] = 0x45;
++	data[11] = 0x75;
++
++	data[12] = 0x07; /* Setting for analog block */
++
++	/* Initial setting for internal analog block */
++	data[13] = 0x1C;
++	data[14] = 0x3F;
++	data[15] = 0x02;
++	data[16] = 0x10;
++	data[17] = 0x20;
++	data[18] = 0x0A;
++	data[19] = 0x00;
++
++	helene_write_regs(priv, 0x81, data, sizeof(data));
++
++	/* Setting for internal RFAGC */
++	helene_write_reg(priv, 0x9B, 0x00);
++
++	msleep(20);
++
++	/* Check CPU_STT/CPU_ERR */
++	helene_read_regs(priv, 0x1A, rdata, sizeof(rdata));
++
++	if (rdata[0] != 0x00) {
++		dev_err(&priv->i2c->dev,
++				"HELENE tuner CPU error 0x%x\n", rdata[0]);
++		return -EIO;
++	}
++
++	/* VCO current setting */
++	cdata[0] = 0x90;
++	cdata[1] = 0x06;
++	helene_write_regs(priv, 0x17, cdata, sizeof(cdata));
++	msleep(20);
++	helene_read_reg(priv, 0x19, data);
++	helene_write_reg(priv, 0x95, (uint8_t)((data[0] >> 4) & 0x0F));
++
++	/* Disable IF signal output */
++	helene_write_reg(priv, 0x74, 0x02);
++
++	/* Standby setting for CPU */
++	helene_write_reg(priv, 0x88, 0x00);
++
++	/* Standby setting for internal logic block */
++	helene_write_reg(priv, 0x87, 0xC0);
++
++	/* Load capacitance control setting for crystal oscillator */
++	helene_write_reg(priv, 0x80, 0x01);
++
++	/* Satellite initial setting */
++	cdata[0] = 0x07;
++	cdata[1] = 0x00;
++	helene_write_regs(priv, 0x41, cdata, sizeof(cdata));
++
++	dev_info(&priv->i2c->dev,
++			"HELENE tuner x_pon done\n");
++
++	return 0;
++}
++
++struct dvb_frontend *helene_attach_s(struct dvb_frontend *fe,
++		const struct helene_config *config,
++		struct i2c_adapter *i2c)
++{
++	struct helene_priv *priv = NULL;
++
++	priv = kzalloc(sizeof(struct helene_priv), GFP_KERNEL);
++	if (priv == NULL)
++		return NULL;
++	priv->i2c_address = (config->i2c_address >> 1);
++	priv->i2c = i2c;
++	priv->set_tuner_data = config->set_tuner_priv;
++	priv->set_tuner = config->set_tuner_callback;
++	priv->xtal = config->xtal;
++
++	if (fe->ops.i2c_gate_ctrl)
++		fe->ops.i2c_gate_ctrl(fe, 1);
++
++	if (helene_x_pon(priv) != 0)
++		return NULL;
++
++	if (fe->ops.i2c_gate_ctrl)
++		fe->ops.i2c_gate_ctrl(fe, 0);
++
++	memcpy(&fe->ops.tuner_ops, &helene_tuner_ops_s,
++			sizeof(struct dvb_tuner_ops));
++	fe->tuner_priv = priv;
++	dev_info(&priv->i2c->dev,
++			"Sony HELENE Sat attached on addr=%x at I2C adapter %p\n",
++			priv->i2c_address, priv->i2c);
++	return fe;
++}
++EXPORT_SYMBOL(helene_attach_s);
++
++struct dvb_frontend *helene_attach(struct dvb_frontend *fe,
++		const struct helene_config *config,
++		struct i2c_adapter *i2c)
++{
++	struct helene_priv *priv = NULL;
++
++	priv = kzalloc(sizeof(struct helene_priv), GFP_KERNEL);
++	if (priv == NULL)
++		return NULL;
++	priv->i2c_address = (config->i2c_address >> 1);
++	priv->i2c = i2c;
++	priv->set_tuner_data = config->set_tuner_priv;
++	priv->set_tuner = config->set_tuner_callback;
++	priv->xtal = config->xtal;
++
++	if (fe->ops.i2c_gate_ctrl)
++		fe->ops.i2c_gate_ctrl(fe, 1);
++
++	if (helene_x_pon(priv) != 0)
++		return NULL;
++
++	if (fe->ops.i2c_gate_ctrl)
++		fe->ops.i2c_gate_ctrl(fe, 0);
++
++	memcpy(&fe->ops.tuner_ops, &helene_tuner_ops,
++			sizeof(struct dvb_tuner_ops));
++	fe->tuner_priv = priv;
++	dev_info(&priv->i2c->dev,
++			"Sony HELENE Ter attached on addr=%x at I2C adapter %p\n",
++			priv->i2c_address, priv->i2c);
++	return fe;
++}
++EXPORT_SYMBOL(helene_attach);
++
++MODULE_DESCRIPTION("Sony HELENE Sat/Ter tuner driver");
++MODULE_AUTHOR("Abylay Ospan <aospan@netup.ru>");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/media/dvb-frontends/helene.h b/drivers/media/dvb-frontends/helene.h
+new file mode 100644
+index 0000000..e1b9224
+--- /dev/null
++++ b/drivers/media/dvb-frontends/helene.h
+@@ -0,0 +1,79 @@
++/*
++ * helene.h
++ *
++ * Sony HELENE DVB-S/S2/T/T2/C/C2/ISDB-T/S tuner driver (CXD2858ER)
++ *
++ * Copyright 2012 Sony Corporation
++ * Copyright (C) 2014 NetUP Inc.
++ * Copyright (C) 2014 Abylay Ospan <aospan@netup.ru>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++  */
++
++#ifndef __DVB_HELENE_H__
++#define __DVB_HELENE_H__
++
++#include <linux/kconfig.h>
++#include <linux/dvb/frontend.h>
++#include <linux/i2c.h>
++
++enum helene_xtal {
++	SONY_HELENE_XTAL_16000, /* 16 MHz */
++	SONY_HELENE_XTAL_20500, /* 20.5 MHz */
++	SONY_HELENE_XTAL_24000, /* 24 MHz */
++	SONY_HELENE_XTAL_41000 /* 41 MHz */
++};
++
++/**
++ * struct helene_config - the configuration of 'Helene' tuner driver
++ * @i2c_address:	I2C address of the tuner
++ * @xtal_freq_mhz:	Oscillator frequency, MHz
++ * @set_tuner_priv:	Callback function private context
++ * @set_tuner_callback:	Callback function that notifies the parent driver
++ *			which tuner is active now
++ */
++struct helene_config {
++	u8	i2c_address;
++	u8	xtal_freq_mhz;
++	void	*set_tuner_priv;
++	int	(*set_tuner_callback)(void *, int);
++	enum helene_xtal xtal;
++};
++
++#if IS_REACHABLE(CONFIG_DVB_HELENE)
++extern struct dvb_frontend *helene_attach(struct dvb_frontend *fe,
++					const struct helene_config *config,
++					struct i2c_adapter *i2c);
++#else
++static inline struct dvb_frontend *helene_attach(struct dvb_frontend *fe,
++					const struct helene_config *config,
++					struct i2c_adapter *i2c)
++{
++	pr_warn("%s: driver disabled by Kconfig\n", __func__);
++	return NULL;
++}
++#endif
++
++#if IS_REACHABLE(CONFIG_DVB_HELENE)
++extern struct dvb_frontend *helene_attach_s(struct dvb_frontend *fe,
++					const struct helene_config *config,
++					struct i2c_adapter *i2c);
++#else
++static inline struct dvb_frontend *helene_attach_s(struct dvb_frontend *fe,
++					const struct helene_config *config,
++					struct i2c_adapter *i2c)
++{
++	pr_warn("%s: driver disabled by Kconfig\n", __func__);
++	return NULL;
++}
++#endif
++
++#endif
+diff --git a/drivers/media/dvb-frontends/horus3a.c b/drivers/media/dvb-frontends/horus3a.c
+index 000606a..a98bca5 100644
+--- a/drivers/media/dvb-frontends/horus3a.c
++++ b/drivers/media/dvb-frontends/horus3a.c
+@@ -66,7 +66,7 @@ static int horus3a_write_regs(struct horus3a_priv *priv,
+ 		}
+ 	};
+ 
+-	if (len + 1 >= sizeof(buf)) {
++	if (len + 1 > sizeof(buf)) {
+ 		dev_warn(&priv->i2c->dev,"wr reg=%04x: len=%d is too big!\n",
+ 			 reg, len + 1);
+ 		return -E2BIG;
+@@ -272,24 +272,6 @@ static int horus3a_set_params(struct dvb_frontend *fe)
+ 		if (fc_lpf > 36)
+ 			fc_lpf = 36;
+ 	} else if (p->delivery_system == SYS_DVBS2) {
+-		int rolloff;
+-
+-		switch (p->rolloff) {
+-		case ROLLOFF_35:
+-			rolloff = 35;
+-			break;
+-		case ROLLOFF_25:
+-			rolloff = 25;
+-			break;
+-		case ROLLOFF_20:
+-			rolloff = 20;
+-			break;
+-		case ROLLOFF_AUTO:
+-		default:
+-			dev_err(&priv->i2c->dev,
+-				"horus3a: auto roll-off is not supported\n");
+-			return -EINVAL;
+-		}
+ 		/*
+ 		 * SR <= 4.5:
+ 		 * fc_lpf = 5
+@@ -302,11 +284,9 @@ static int horus3a_set_params(struct dvb_frontend *fe)
+ 		if (symbol_rate <= 4500)
+ 			fc_lpf = 5;
+ 		else if (symbol_rate <= 10000)
+-			fc_lpf = (u8)DIV_ROUND_UP(
+-				symbol_rate * (200 + rolloff), 200000);
++			fc_lpf = (u8)((symbol_rate * 11 + (10000-1)) / 10000);
+ 		else
+-			fc_lpf = (u8)DIV_ROUND_UP(
+-				symbol_rate * (100 + rolloff), 200000) + 5;
++			fc_lpf = (u8)((symbol_rate * 3 + (5000-1)) / 5000 + 5);
+ 		/* 5 <= fc_lpf <= 36 is valid */
+ 		if (fc_lpf > 36)
+ 			fc_lpf = 36;
+diff --git a/drivers/media/dvb-frontends/stv0900_core.c b/drivers/media/dvb-frontends/stv0900_core.c
+index fe31dd5..9b55137 100644
+--- a/drivers/media/dvb-frontends/stv0900_core.c
++++ b/drivers/media/dvb-frontends/stv0900_core.c
+@@ -34,8 +34,14 @@
+ #include "stv0900_priv.h"
+ #include "stv0900_init.h"
+ 
+-int stvdebug = 1;
++int stvdebug = 0;
++int mclk_g = 134000000; /* 134 Mhz by default */
++int ts_speed_g = 0;
++int ts_cfgm_g = 0;
+ module_param_named(debug, stvdebug, int, 0644);
++module_param_named(mclk, mclk_g, int, 0644);
++module_param_named(ts_speed, ts_speed_g, int, 0644);
++module_param_named(ts_cfgm, ts_cfgm_g, int, 0644);
+ 
+ /* internal params node */
+ struct stv0900_inode {
+@@ -1584,6 +1590,19 @@ static enum dvbfe_search stv0900_search(struct dvb_frontend *fe)
+ 
+ 	dprintk("%s: ", __func__);
+ 
++        stv0900_set_mclk(intp, mclk_g);
++        msleep(3);
++
++        if(!ts_speed_g){
++                dprintk("%s: setting custom TSSPEED=0x%x", __func__, ts_speed_g);
++                stv0900_write_reg(intp, TSSPEED, ts_speed_g);
++        }
++
++        if(!ts_cfgm_g){
++                dprintk("%s: setting custom TSCFGM=0x%x", __func__, ts_cfgm_g);
++                stv0900_write_reg(intp, TSCFGM, ts_cfgm_g);
++        }
++
+ 	if (!(INRANGE(100000, c->symbol_rate, 70000000)))
+ 		return DVBFE_ALGO_SEARCH_FAILED;
+ 
+diff --git a/drivers/media/pci/netup_unidvb/Kconfig b/drivers/media/pci/netup_unidvb/Kconfig
+index f277b0b..ea0297a 100644
+--- a/drivers/media/pci/netup_unidvb/Kconfig
++++ b/drivers/media/pci/netup_unidvb/Kconfig
+@@ -5,8 +5,13 @@ config DVB_NETUP_UNIDVB
+     select VIDEOBUF2_VMALLOC
+ 	select DVB_HORUS3A if MEDIA_SUBDRV_AUTOSELECT
+ 	select DVB_ASCOT2E if MEDIA_SUBDRV_AUTOSELECT
++	select DVB_HELENE if MEDIA_SUBDRV_AUTOSELECT
+ 	select DVB_LNBH25 if MEDIA_SUBDRV_AUTOSELECT
+ 	select DVB_CXD2841ER if MEDIA_SUBDRV_AUTOSELECT
+ 	---help---
+ 	  Support for NetUP PCI express Universal DVB card.
+-
++     help
++        Say Y when you want to support NetUP Dual Universal DVB card
++	Card can receive two independent streams in following standards:
++		DVB-S/S2, T/T2, C/C2
++	Two CI slots available for CAM modules.
+diff --git a/drivers/media/pci/netup_unidvb/netup_unidvb.h b/drivers/media/pci/netup_unidvb/netup_unidvb.h
+index a67b281..39b08ec 100644
+--- a/drivers/media/pci/netup_unidvb/netup_unidvb.h
++++ b/drivers/media/pci/netup_unidvb/netup_unidvb.h
+@@ -50,6 +50,15 @@
+ #define NETUP_UNIDVB_IRQ_CAM0	(1 << 11)
+ #define NETUP_UNIDVB_IRQ_CAM1	(1 << 12)
+ 
++/* NetUP Universal DVB card hardware revisions and it's PCI device id's:
++ * 1.3 - CXD2841ER demod, ASCOT2E and HORUS3A tuners
++ * 1.4 - CXD2854ER demod, HELENE tuner
++*/
++enum netup_hw_rev {
++	NETUP_HW_REV_1_3 = 0x18F6,
++	NETUP_HW_REV_1_4 = 0x18F7
++};
++
+ struct netup_dma {
+ 	u8			num;
+ 	spinlock_t		lock;
+@@ -119,6 +128,7 @@ struct netup_unidvb_dev {
+ 	struct netup_dma		dma[2];
+ 	struct netup_ci_state		ci[2];
+ 	struct netup_spi		*spi;
++	enum netup_hw_rev		rev;
+ };
+ 
+ int netup_i2c_register(struct netup_unidvb_dev *ndev);
+diff --git a/drivers/media/pci/netup_unidvb/netup_unidvb_ci.c b/drivers/media/pci/netup_unidvb/netup_unidvb_ci.c
+index f46ffac6..8f431ef 100644
+--- a/drivers/media/pci/netup_unidvb/netup_unidvb_ci.c
++++ b/drivers/media/pci/netup_unidvb/netup_unidvb_ci.c
+@@ -96,6 +96,9 @@ static int netup_unidvb_ci_slot_reset(struct dvb_ca_en50221 *en50221,
+ 	u16 ci_stat = 0;
+ 	int reset_counter = 3;
+ 
++	/* Enable bypass on CAM reset: */
++	writew(BIT_CAM_BYPASS << shift, dev->bmmio0 + CAM_CTRLSTAT_READ_SET);
++
+ 	dev_dbg(&dev->pci_dev->dev, "%s(): CAM_CTRLSTAT_READ_SET=0x%x\n",
+ 		__func__, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
+ reset:
+@@ -147,7 +150,7 @@ static int netup_unidvb_ci_read_attribute_mem(struct dvb_ca_en50221 *en50221,
+ {
+ 	struct netup_ci_state *state = en50221->data;
+ 	struct netup_unidvb_dev *dev = state->dev;
+-	u8 val = *((u8 __force *)state->membase8_io + addr);
++	u8 val = *((u8 __force *)state->membase8_config + addr);
+ 
+ 	dev_dbg(&dev->pci_dev->dev,
+ 		"%s(): addr=0x%x val=0x%x\n", __func__, addr, val);
+@@ -162,7 +165,7 @@ static int netup_unidvb_ci_write_attribute_mem(struct dvb_ca_en50221 *en50221,
+ 
+ 	dev_dbg(&dev->pci_dev->dev,
+ 		"%s(): addr=0x%x data=0x%x\n", __func__, addr, data);
+-	*((u8 __force *)state->membase8_io + addr) = data;
++	*((u8 __force *)state->membase8_config + addr) = data;
+ 	return 0;
+ }
+ 
+@@ -245,4 +248,3 @@ void netup_unidvb_ci_unregister(struct netup_unidvb_dev *dev, int num)
+ 	state = &dev->ci[num];
+ 	dvb_ca_en50221_release(&state->ca);
+ }
+-
+diff --git a/drivers/media/pci/netup_unidvb/netup_unidvb_core.c b/drivers/media/pci/netup_unidvb/netup_unidvb_core.c
+index 3fdbd81..d380853 100644
+--- a/drivers/media/pci/netup_unidvb/netup_unidvb_core.c
++++ b/drivers/media/pci/netup_unidvb/netup_unidvb_core.c
+@@ -34,6 +34,7 @@
+ #include "cxd2841er.h"
+ #include "horus3a.h"
+ #include "ascot2e.h"
++#include "helene.h"
+ #include "lnbh25.h"
+ 
+ static int spi_enable;
+@@ -120,7 +121,8 @@ static int netup_unidvb_tuner_ctrl(void *priv, int is_dvb_tc);
+ static void netup_unidvb_queue_cleanup(struct netup_dma *dma);
+ 
+ static struct cxd2841er_config demod_config = {
+-	.i2c_addr = 0xc8
++	.i2c_addr = 0xc8,
++	.xtal = SONY_XTAL_24000
+ };
+ 
+ static struct horus3a_config horus3a_conf = {
+@@ -134,6 +136,12 @@ static struct ascot2e_config ascot2e_conf = {
+ 	.set_tuner_callback = netup_unidvb_tuner_ctrl
+ };
+ 
++static struct helene_config helene_conf = {
++	.i2c_address = 0xc0,
++	.xtal = SONY_HELENE_XTAL_24000,
++	.set_tuner_callback = netup_unidvb_tuner_ctrl
++};
++
+ static struct lnbh25_config lnbh25_conf = {
+ 	.i2c_address = 0x10,
+ 	.data2_config = LNBH25_TEN | LNBH25_EXTM
+@@ -152,6 +160,11 @@ static int netup_unidvb_tuner_ctrl(void *priv, int is_dvb_tc)
+ 		__func__, dma->num, is_dvb_tc);
+ 	reg = readb(ndev->bmmio0 + GPIO_REG_IO);
+ 	mask = (dma->num == 0) ? GPIO_RFA_CTL : GPIO_RFB_CTL;
++
++	/* inverted tuner control in hw rev. 1.4 */
++	if (ndev->rev == NETUP_HW_REV_1_4)
++		is_dvb_tc = !is_dvb_tc;
++
+ 	if (!is_dvb_tc)
+ 		reg |= mask;
+ 	else
+@@ -373,7 +386,18 @@ static int netup_unidvb_queue_init(struct netup_dma *dma,
+ static int netup_unidvb_dvb_init(struct netup_unidvb_dev *ndev,
+ 				 int num)
+ {
+-	struct vb2_dvb_frontend *fe0, *fe1, *fe2;
++	int fe_count = 0;
++	int i = 0;
++	struct vb2_dvb_frontend *fes[4];
++	u8 fe_name[32];
++
++	if (ndev->rev == NETUP_HW_REV_1_3) {
++		fe_count = 3;
++		demod_config.xtal = SONY_XTAL_20500;
++	} else {
++		fe_count = 4;
++		demod_config.xtal = SONY_XTAL_24000;
++	}
+ 
+ 	if (num < 0 || num > 1) {
+ 		dev_dbg(&ndev->pci_dev->dev,
+@@ -382,84 +406,145 @@ static int netup_unidvb_dvb_init(struct netup_unidvb_dev *ndev,
+ 	}
+ 	mutex_init(&ndev->frontends[num].lock);
+ 	INIT_LIST_HEAD(&ndev->frontends[num].felist);
+-	if (vb2_dvb_alloc_frontend(&ndev->frontends[num], 1) == NULL ||
+-		vb2_dvb_alloc_frontend(
+-			&ndev->frontends[num], 2) == NULL ||
+-		vb2_dvb_alloc_frontend(
+-			&ndev->frontends[num], 3) == NULL) {
+-		dev_dbg(&ndev->pci_dev->dev,
+-			"%s(): unable to to alllocate vb2_dvb_frontend\n",
+-			__func__);
+-		return -ENOMEM;
++
++	for (i = 0; i < fe_count; i++) {
++		if (vb2_dvb_alloc_frontend(&ndev->frontends[num], i+1)
++				== NULL) {
++			dev_err(&ndev->pci_dev->dev,
++					"%s(): unable to allocate vb2_dvb_frontend\n",
++					__func__);
++			return -ENOMEM;
++		}
+ 	}
+-	fe0 = vb2_dvb_get_frontend(&ndev->frontends[num], 1);
+-	fe1 = vb2_dvb_get_frontend(&ndev->frontends[num], 2);
+-	fe2 = vb2_dvb_get_frontend(&ndev->frontends[num], 3);
+-	if (fe0 == NULL || fe1 == NULL || fe2 == NULL) {
+-		dev_dbg(&ndev->pci_dev->dev,
+-			"%s(): frontends has not been allocated\n", __func__);
+-		return -EINVAL;
++
++	for (i = 0; i < fe_count; i++) {
++		fes[i] = vb2_dvb_get_frontend(&ndev->frontends[num], i+1);
++		if (fes[i] == NULL) {
++			dev_err(&ndev->pci_dev->dev,
++				"%s(): frontends has not been allocated\n",
++				__func__);
++			return -EINVAL;
++		}
++	}
++
++	for (i = 0; i < fe_count; i++) {
++		netup_unidvb_queue_init(&ndev->dma[num], &fes[i]->dvb.dvbq);
++		snprintf(fe_name, sizeof(fe_name), "netup_fe%d", i);
++		fes[i]->dvb.name = fe_name;
+ 	}
+-	netup_unidvb_queue_init(&ndev->dma[num], &fe0->dvb.dvbq);
+-	netup_unidvb_queue_init(&ndev->dma[num], &fe1->dvb.dvbq);
+-	netup_unidvb_queue_init(&ndev->dma[num], &fe2->dvb.dvbq);
+-	fe0->dvb.name = "netup_fe0";
+-	fe1->dvb.name = "netup_fe1";
+-	fe2->dvb.name = "netup_fe2";
+-	fe0->dvb.frontend = dvb_attach(cxd2841er_attach_s,
++
++	fes[0]->dvb.frontend = dvb_attach(cxd2841er_attach_s,
+ 		&demod_config, &ndev->i2c[num].adap);
+-	if (fe0->dvb.frontend == NULL) {
++	if (fes[0]->dvb.frontend == NULL) {
+ 		dev_dbg(&ndev->pci_dev->dev,
+ 			"%s(): unable to attach DVB-S/S2 frontend\n",
+ 			__func__);
+ 		goto frontend_detach;
+ 	}
+-	horus3a_conf.set_tuner_priv = &ndev->dma[num];
+-	if (!dvb_attach(horus3a_attach, fe0->dvb.frontend,
+-			&horus3a_conf, &ndev->i2c[num].adap)) {
+-		dev_dbg(&ndev->pci_dev->dev,
+-			"%s(): unable to attach DVB-S/S2 tuner frontend\n",
+-			__func__);
+-		goto frontend_detach;
++
++	if (ndev->rev == NETUP_HW_REV_1_3) {
++		horus3a_conf.set_tuner_priv = &ndev->dma[num];
++		if (!dvb_attach(horus3a_attach, fes[0]->dvb.frontend,
++					&horus3a_conf, &ndev->i2c[num].adap)) {
++			dev_dbg(&ndev->pci_dev->dev,
++					"%s(): unable to attach HORUS3A DVB-S/S2 tuner frontend\n",
++					__func__);
++			goto frontend_detach;
++		}
++	} else {
++		helene_conf.set_tuner_priv = &ndev->dma[num];
++		if (!dvb_attach(helene_attach_s, fes[0]->dvb.frontend,
++					&helene_conf, &ndev->i2c[num].adap)) {
++			dev_err(&ndev->pci_dev->dev,
++					"%s(): unable to attach HELENE DVB-S/S2 tuner frontend\n",
++					__func__);
++			goto frontend_detach;
++		}
+ 	}
+-	if (!dvb_attach(lnbh25_attach, fe0->dvb.frontend,
++
++	if (!dvb_attach(lnbh25_attach, fes[0]->dvb.frontend,
+ 			&lnbh25_conf, &ndev->i2c[num].adap)) {
+ 		dev_dbg(&ndev->pci_dev->dev,
+ 			"%s(): unable to attach SEC frontend\n", __func__);
+ 		goto frontend_detach;
+ 	}
++
+ 	/* DVB-T/T2 frontend */
+-	fe1->dvb.frontend = dvb_attach(cxd2841er_attach_t,
++	fes[1]->dvb.frontend = dvb_attach(cxd2841er_attach_t,
+ 		&demod_config, &ndev->i2c[num].adap);
+-	if (fe1->dvb.frontend == NULL) {
++	if (fes[1]->dvb.frontend == NULL) {
+ 		dev_dbg(&ndev->pci_dev->dev,
+ 			"%s(): unable to attach DVB-T frontend\n", __func__);
+ 		goto frontend_detach;
+ 	}
+-	fe1->dvb.frontend->id = 1;
+-	ascot2e_conf.set_tuner_priv = &ndev->dma[num];
+-	if (!dvb_attach(ascot2e_attach, fe1->dvb.frontend,
+-			&ascot2e_conf, &ndev->i2c[num].adap)) {
+-		dev_dbg(&ndev->pci_dev->dev,
+-			"%s(): unable to attach DVB-T tuner frontend\n",
+-			__func__);
+-		goto frontend_detach;
++	fes[1]->dvb.frontend->id = 1;
++	if (ndev->rev == NETUP_HW_REV_1_3) {
++		ascot2e_conf.set_tuner_priv = &ndev->dma[num];
++		if (!dvb_attach(ascot2e_attach, fes[1]->dvb.frontend,
++					&ascot2e_conf, &ndev->i2c[num].adap)) {
++			dev_dbg(&ndev->pci_dev->dev,
++					"%s(): unable to attach DVB-T tuner frontend\n",
++					__func__);
++			goto frontend_detach;
++		}
++	} else {
++		helene_conf.set_tuner_priv = &ndev->dma[num];
++		if (!dvb_attach(helene_attach, fes[1]->dvb.frontend,
++					&helene_conf, &ndev->i2c[num].adap)) {
++			dev_err(&ndev->pci_dev->dev,
++					"%s(): unable to attach HELENE DVB-T/T2 tuner frontend\n",
++					__func__);
++			goto frontend_detach;
++		}
+ 	}
++
+ 	/* DVB-C/C2 frontend */
+-	fe2->dvb.frontend = dvb_attach(cxd2841er_attach_c,
++	fes[2]->dvb.frontend = dvb_attach(cxd2841er_attach_c,
+ 				&demod_config, &ndev->i2c[num].adap);
+-	if (fe2->dvb.frontend == NULL) {
++	if (fes[2]->dvb.frontend == NULL) {
+ 		dev_dbg(&ndev->pci_dev->dev,
+ 			"%s(): unable to attach DVB-C frontend\n", __func__);
+ 		goto frontend_detach;
+ 	}
+-	fe2->dvb.frontend->id = 2;
+-	if (!dvb_attach(ascot2e_attach, fe2->dvb.frontend,
+-			&ascot2e_conf, &ndev->i2c[num].adap)) {
+-		dev_dbg(&ndev->pci_dev->dev,
+-			"%s(): unable to attach DVB-T/C tuner frontend\n",
+-			__func__);
+-		goto frontend_detach;
++	fes[2]->dvb.frontend->id = 2;
++	if (ndev->rev == NETUP_HW_REV_1_3) {
++		if (!dvb_attach(ascot2e_attach, fes[2]->dvb.frontend,
++					&ascot2e_conf, &ndev->i2c[num].adap)) {
++			dev_dbg(&ndev->pci_dev->dev,
++					"%s(): unable to attach DVB-T/C tuner frontend\n",
++					__func__);
++			goto frontend_detach;
++		}
++	} else {
++		helene_conf.set_tuner_priv = &ndev->dma[num];
++		if (!dvb_attach(helene_attach, fes[2]->dvb.frontend,
++					&helene_conf, &ndev->i2c[num].adap)) {
++			dev_err(&ndev->pci_dev->dev,
++					"%s(): unable to attach HELENE Ter tuner frontend\n",
++					__func__);
++			goto frontend_detach;
++		}
++	}
++
++	if (ndev->rev == NETUP_HW_REV_1_4) {
++		/* ISDB-T frontend */
++		fes[3]->dvb.frontend = dvb_attach(cxd2841er_attach_i,
++				&demod_config, &ndev->i2c[num].adap);
++		if (fes[3]->dvb.frontend == NULL) {
++			dev_dbg(&ndev->pci_dev->dev,
++				"%s(): unable to attach ISDB-T frontend\n",
++				__func__);
++			goto frontend_detach;
++		}
++		fes[3]->dvb.frontend->id = 3;
++		helene_conf.set_tuner_priv = &ndev->dma[num];
++		if (!dvb_attach(helene_attach, fes[3]->dvb.frontend,
++					&helene_conf, &ndev->i2c[num].adap)) {
++			dev_err(&ndev->pci_dev->dev,
++					"%s(): unable to attach HELENE Ter tuner frontend\n",
++					__func__);
++			goto frontend_detach;
++		}
+ 	}
+ 
+ 	if (vb2_dvb_register_bus(&ndev->frontends[num],
+@@ -731,7 +816,7 @@ static int netup_unidvb_request_mmio(struct pci_dev *pci_dev)
+ static int netup_unidvb_request_modules(struct device *dev)
+ {
+ 	static const char * const modules[] = {
+-		"lnbh25", "ascot2e", "horus3a", "cxd2841er", NULL
++		"lnbh25", "ascot2e", "horus3a", "cxd2841er", "helene", NULL
+ 	};
+ 	const char * const *curr_mod = modules;
+ 	int err;
+@@ -775,7 +860,17 @@ static int netup_unidvb_initdev(struct pci_dev *pci_dev,
+ 
+ 	if (!ndev)
+ 		goto dev_alloc_err;
+-	memset(ndev, 0, sizeof(*ndev));
++
++	/* detect hardware revision */
++	if (pci_dev->device == NETUP_HW_REV_1_3)
++		ndev->rev = NETUP_HW_REV_1_3;
++	else
++		ndev->rev = NETUP_HW_REV_1_4;
++
++	dev_info(&pci_dev->dev,
++		"%s(): board (0x%x) hardware revision 0x%x\n",
++		__func__, pci_dev->device, ndev->rev);
++
+ 	ndev->old_fw = old_firmware;
+ 	ndev->wq = create_singlethread_workqueue(NETUP_UNIDVB_NAME);
+ 	if (!ndev->wq) {
+@@ -974,7 +1069,8 @@ static void netup_unidvb_finidev(struct pci_dev *pci_dev)
+ 
+ 
+ static struct pci_device_id netup_unidvb_pci_tbl[] = {
+-	{ PCI_DEVICE(0x1b55, 0x18f6) },
++	{ PCI_DEVICE(0x1b55, 0x18f6) }, /* hw rev. 1.3 */
++	{ PCI_DEVICE(0x1b55, 0x18f7) }, /* hw rev. 1.4 */
+ 	{ 0, }
+ };
+ MODULE_DEVICE_TABLE(pci, netup_unidvb_pci_tbl);
