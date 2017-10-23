@@ -55,6 +55,9 @@ struct i915_params i915 __read_mostly = {
 	.edp_vswing = 0,
 	.enable_guc_submission = false,
 	.guc_log_level = -1,
+	.enable_scheduler = 1,
+	.ring_multiplier = 2,
+	.enable_dss = 0,
 };
 
 module_param_named(modeset, i915.modeset, int, 0400);
@@ -112,7 +115,7 @@ MODULE_PARM_DESC(enable_hangcheck,
 module_param_named_unsafe(enable_ppgtt, i915.enable_ppgtt, int, 0400);
 MODULE_PARM_DESC(enable_ppgtt,
 	"Override PPGTT usage. "
-	"(-1=auto [default], 0=disabled, 1=aliasing, 2=full)");
+	"(-1=auto [default], 0=disabled, 1=aliasing, 2=full, 3=full with extended address space)");
 
 module_param_named_unsafe(enable_execlists, i915.enable_execlists, int, 0400);
 MODULE_PARM_DESC(enable_execlists,
@@ -196,3 +199,13 @@ MODULE_PARM_DESC(enable_guc_submission, "Enable GuC submission (default:false)")
 module_param_named(guc_log_level, i915.guc_log_level, int, 0400);
 MODULE_PARM_DESC(guc_log_level,
 	"GuC firmware logging level (-1:disabled (default), 0-3:enabled)");
+
+module_param_named_unsafe(enable_scheduler, i915.enable_scheduler, int, 0600);
+MODULE_PARM_DESC(enable_scheduler, "Enable scheduler (0 = disable, 1 = enable [default])");
+
+module_param_named(ring_multiplier, i915.ring_multiplier, int, 0400);
+MODULE_PARM_DESC(ring_multiplier, "Configure Ring/GT multiplier for SKL. (2:multiplier is 2 (default), 3:multiplier is 3)");
+
+module_param_named(enable_dss, i915.enable_dss, int, 0600);
+MODULE_PARM_DESC(enable_dss,
+		 "Enable dynamic slice shutdown (0 = disable [default], 1 = enable)");

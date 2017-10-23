@@ -47,10 +47,50 @@
 #include <linux/vga_switcheroo.h>
 #include <linux/slab.h>
 #include <acpi/video.h>
+#include "i915_scheduler.h"
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
 #include <linux/oom.h>
 
+static int i915_load_balancing_hint(struct drm_device *dev, void *data,
+	struct drm_file *file_priv)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_i915_ring_load_query *query = data;
+	struct drm_i915_ring_load_info load_info;
+	struct i915_scheduler *scheduler;
+	int i, ring_id;
+
+	scheduler = dev_priv ? dev_priv->scheduler : NULL;
+
+	if (!scheduler || !query || !query->load_info)
+		return EINVAL;
+
+	/* Update performance counters for given rings. */
+	for (i = 0; i < query->query_size; i++) {
+		if (copy_from_user(&load_info, &query->load_info[i], sizeof(load_info)))
+			return EINVAL;
+
+		switch (load_info.ring_id & (I915_EXEC_RING_MASK | I915_EXEC_BSD_MASK)) {
+		case I915_EXEC_BSD | I915_EXEC_BSD_RING1:
+			ring_id = VCS;
+			break;
+		case I915_EXEC_BSD | I915_EXEC_BSD_RING2:
+			ring_id = VCS2;
+			break;
+		default:
+			return EINVAL;
+		}
+
+		load_info.load_cnt = scheduler->counts[ring_id].flying +
+			scheduler->counts[ring_id].queued;
+
+		if (copy_to_user(&query->load_info[i], &load_info, sizeof(load_info)))
+			return EINVAL;
+	}
+
+	return 0;
+}
 
 static int i915_getparam(struct drm_device *dev, void *data,
 			 struct drm_file *file_priv)
@@ -169,6 +209,19 @@ static int i915_getparam(struct drm_device *dev, void *data,
 		break;
 	case I915_PARAM_HAS_RESOURCE_STREAMER:
 		value = HAS_RESOURCE_STREAMER(dev);
+		break;
+	case I915_PARAM_HAS_EXEC_SOFTPIN:
+		value = 1;
+		break;
+	case I915_PRIVATE_PARAM_HAS_EXEC_FORCE_NON_COHERENT:
+		value = !dev_priv->workarounds.WaForceEnableNonCoherent &&
+			INTEL_INFO(dev)->gen >= 9;
+		break;
+	case I915_PRIVATE_PARAM_SCHEDULER_SUPPORT_USER_CTX:
+		value = 1;
+		break;
+	case I915_PRIVATE_PARAM_HAS_DSS_SUPPORT:
+		value = 1;
 		break;
 	default:
 		DRM_DEBUG("Unknown parameter %d\n", param->param);
@@ -895,6 +948,9 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 	mutex_init(&dev_priv->modeset_restore_lock);
 	mutex_init(&dev_priv->csr_lock);
 	mutex_init(&dev_priv->av_mutex);
+ 
+	mutex_init(&dev_priv->perfmon.config.lock);
+	mutex_init(&dev_priv->rc6_wa_bb.lock);
 
 	intel_pm_setup(dev);
 
@@ -1089,6 +1145,10 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 
 	i915_audio_component_init(dev_priv);
 
+	/* Initialize all the resource for perf monitoring */
+	i915_perfmon_setup(dev_priv);
+	i915_perfmon_cleanup(dev_priv);
+
 	return 0;
 
 out_power_well:
@@ -1148,6 +1208,9 @@ int i915_driver_unload(struct drm_device *dev)
 
 	WARN_ON(unregister_oom_notifier(&dev_priv->mm.oom_notifier));
 	unregister_shrinker(&dev_priv->mm.shrinker);
+
+	/* Cancel the scheduler work handler, which should be idle now. */
+	cancel_work_sync(&dev_priv->mm.scheduler_work);
 
 	io_mapping_free(dev_priv->gtt.mappable);
 	arch_phys_wc_del(dev_priv->gtt.mtrr);
@@ -1216,6 +1279,10 @@ int i915_driver_unload(struct drm_device *dev)
 	kmem_cache_destroy(dev_priv->vmas);
 	kmem_cache_destroy(dev_priv->objects);
 	pci_dev_put(dev_priv->bridge_dev);
+
+	/* clean up all the resource for perf monitoring */
+	i915_perfmon_cleanup(dev_priv);
+
 	kfree(dev_priv);
 
 	return 0;
@@ -1252,6 +1319,8 @@ void i915_driver_lastclose(struct drm_device *dev)
 
 void i915_driver_preclose(struct drm_device *dev, struct drm_file *file)
 {
+	i915_scheduler_closefile(dev, file);
+
 	mutex_lock(&dev->struct_mutex);
 	i915_gem_context_close(dev, file);
 	i915_gem_release(dev, file);
@@ -1323,12 +1392,15 @@ const struct drm_ioctl_desc i915_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(I915_GET_SPRITE_COLORKEY, drm_noop, DRM_MASTER|DRM_CONTROL_ALLOW),
 	DRM_IOCTL_DEF_DRV(I915_GEM_WAIT, i915_gem_wait_ioctl, DRM_AUTH|DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(I915_GEM_CONTEXT_CREATE, i915_gem_context_create_ioctl, DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(I915_GEM_CONTEXT_CREATE2, i915_gem_context_create2_ioctl, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(I915_GEM_CONTEXT_DESTROY, i915_gem_context_destroy_ioctl, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(I915_REG_READ, i915_reg_read_ioctl, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(I915_GET_RESET_STATS, i915_get_reset_stats_ioctl, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(I915_GEM_USERPTR, i915_gem_userptr_ioctl, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(I915_GEM_CONTEXT_GETPARAM, i915_gem_context_getparam_ioctl, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(I915_GEM_CONTEXT_SETPARAM, i915_gem_context_setparam_ioctl, DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(I915_PERFMON, i915_perfmon_ioctl, DRM_UNLOCKED|DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(I915_LOAD_BALANCING_HINT, i915_load_balancing_hint, DRM_RENDER_ALLOW),
 };
 
 int i915_max_ioctl = ARRAY_SIZE(i915_ioctls);

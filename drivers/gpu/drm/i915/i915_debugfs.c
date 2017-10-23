@@ -39,6 +39,7 @@
 #include "intel_ringbuffer.h"
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
+#include "i915_scheduler.h"
 
 enum {
 	ACTIVE_LIST,
@@ -525,6 +526,136 @@ static int i915_gem_object_info(struct seq_file *m, void* data)
 	return 0;
 }
 
+static int vma_rank_by_ggtt(void *priv,
+			    struct list_head *A,
+			    struct list_head *B)
+{
+	struct i915_vma *a = list_entry(A, typeof(*a), exec_list);
+	struct i915_vma *b = list_entry(B, typeof(*b), exec_list);
+
+	return a->node.start - b->node.start;
+}
+
+static u32 __fence_size(struct drm_i915_private *dev_priv, u32 start, u32 end)
+{
+	u32 size = end - start;
+	u32 fence_size;
+
+	if (INTEL_INFO(dev_priv)->gen < 4) {
+		u32 fence_max;
+		u32 fence_next;
+
+		if (IS_GEN3(dev_priv)) {
+			fence_max = I830_FENCE_MAX_SIZE_VAL << 20;
+			fence_next = 1024*1024;
+		} else {
+			fence_max = I830_FENCE_MAX_SIZE_VAL << 19;
+			fence_next = 512*1024;
+		}
+
+		fence_max = min(fence_max, size);
+		fence_size = 0;
+		/* Find fence_size less than fence_max and power of 2 */
+		while (fence_next <= fence_max) {
+			u32 base = ALIGN(start, fence_next);
+			if (base + fence_next > end)
+				break;
+
+			fence_size = fence_next;
+			fence_next <<= 1;
+		}
+	} else {
+		fence_size = size;
+	}
+
+	return fence_size;
+}
+
+static int i915_gem_aperture_info(struct seq_file *m, void *data)
+{
+	struct drm_info_node *node = m->private;
+	struct drm_device *dev = node->minor->dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct i915_gtt *ggtt = &dev_priv->gtt;
+	struct drm_i915_gem_get_aperture arg;
+	struct i915_vma *vma;
+	struct list_head map_list;
+	const uint64_t map_limit = ggtt->mappable_end;
+	uint64_t map_space, map_largest, fence_space, fence_largest;
+	uint64_t last, size;
+	int ret;
+
+	INIT_LIST_HEAD(&map_list);
+
+	map_space = map_largest = 0;
+	fence_space = fence_largest = 0;
+
+	ret = i915_gem_get_aperture_ioctl(node->minor->dev, &arg, NULL);
+	if (ret)
+		return ret;
+
+	mutex_lock(&dev->struct_mutex);
+	list_for_each_entry(vma, &ggtt->base.active_list, mm_list)
+		if (vma->pin_count &&
+			(vma->node.start + vma->node.size) <= map_limit)
+			list_add(&vma->exec_list, &map_list);
+	list_for_each_entry(vma, &ggtt->base.inactive_list, mm_list)
+		if (vma->pin_count &&
+			(vma->node.start + vma->node.size) <= map_limit)
+			list_add(&vma->exec_list, &map_list);
+
+	last = 0;
+	list_sort(NULL, &map_list, vma_rank_by_ggtt);
+	while (!list_empty(&map_list)) {
+		vma = list_first_entry(&map_list, typeof(*vma), exec_list);
+		list_del_init(&vma->exec_list);
+
+		if (last == 0)
+			goto skip_first;
+
+		size = vma->node.start - last;
+		if (size > map_largest)
+			map_largest = size;
+		map_space += size;
+
+		size = __fence_size(dev_priv, last, vma->node.start);
+		if (size > fence_largest)
+			fence_largest = size;
+		fence_space += size;
+
+skip_first:
+		last = vma->node.start + vma->node.size;
+	}
+	if (last < map_limit) {
+		size = map_limit - last;
+		if (size > map_largest)
+			map_largest = size;
+		map_space += size;
+
+		size = __fence_size(dev_priv, last, map_limit);
+		if (size > fence_largest)
+			fence_largest = size;
+		fence_space += size;
+	}
+
+	mutex_unlock(&dev->struct_mutex);
+
+	seq_printf(m, "Total size of the GTT: %llu bytes\n",
+		   arg.aper_size);
+	seq_printf(m, "Available space in the GTT: %llu bytes\n",
+		   arg.aper_available_size);
+	seq_printf(m, "Available space in the mappable aperture: %llu bytes\n",
+		   map_space);
+	seq_printf(m, "Single largest space in the mappable aperture: %llu bytes\n",
+		   map_largest);
+	seq_printf(m, "Available space for fences: %llu bytes\n",
+		   fence_space);
+	seq_printf(m, "Single largest fence available: %llu bytes\n",
+		   fence_largest);
+
+	return 0;
+}
+
 static int i915_gem_gtt_info(struct seq_file *m, void *data)
 {
 	struct drm_info_node *node = m->private;
@@ -601,7 +732,7 @@ static int i915_gem_pageflip_info(struct seq_file *m, void *data)
 					   i915_gem_request_get_seqno(work->flip_queued_req),
 					   dev_priv->next_seqno,
 					   ring->get_seqno(ring, true),
-					   i915_gem_request_completed(work->flip_queued_req, true));
+					   i915_gem_request_completed(work->flip_queued_req));
 			} else
 				seq_printf(m, "Flip not associated with any ring\n");
 			seq_printf(m, "Flip queued on frame %d, (was ready on frame %d), now %d\n",
@@ -709,11 +840,13 @@ static int i915_gem_request_info(struct seq_file *m, void *data)
 			task = NULL;
 			if (req->pid)
 				task = pid_task(req->pid, PIDTYPE_PID);
-			seq_printf(m, "    %x @ %d: %s [%d]\n",
+			seq_printf(m, "    %x @ %d: %s [%d], wait = %d, fence = %x:%x\n",
 				   req->seqno,
 				   (int) (jiffies - req->emitted_jiffies),
 				   task ? task->comm : "<unknown>",
-				   task ? task->pid : -1);
+				   task ? task->pid : -1,
+				   req->wait_count,
+				   req->fence.context, req->fence.seqno);
 			rcu_read_unlock();
 		}
 
@@ -1121,6 +1254,200 @@ DEFINE_SIMPLE_ATTRIBUTE(i915_next_seqno_fops,
 			i915_next_seqno_get, i915_next_seqno_set,
 			"0x%llx\n");
 
+static int
+i915_scheduler_priority_min_get(void *data, u64 *val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	*val = (u64) scheduler->priority_level_min;
+	return 0;
+}
+
+static int
+i915_scheduler_priority_min_set(void *data, u64 val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	scheduler->priority_level_min = (int32_t) val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_scheduler_priority_min_fops,
+			i915_scheduler_priority_min_get,
+			i915_scheduler_priority_min_set,
+			"%lld\n");
+
+static int
+i915_scheduler_priority_max_get(void *data, u64 *val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	*val = (u64) scheduler->priority_level_max;
+	return 0;
+}
+
+static int
+i915_scheduler_priority_max_set(void *data, u64 val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	scheduler->priority_level_max = (int32_t) val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_scheduler_priority_max_fops,
+			i915_scheduler_priority_max_get,
+			i915_scheduler_priority_max_set,
+			"%lld\n");
+
+static int
+i915_scheduler_priority_bump_get(void *data, u64 *val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	*val = (u64) scheduler->priority_level_bump;
+	return 0;
+}
+
+static int
+i915_scheduler_priority_bump_set(void *data, u64 val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	scheduler->priority_level_bump = (u32) val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_scheduler_priority_bump_fops,
+			i915_scheduler_priority_bump_get,
+			i915_scheduler_priority_bump_set,
+			"%lld\n");
+
+static int
+i915_scheduler_priority_preempt_get(void *data, u64 *val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	*val = (u64) scheduler->priority_level_preempt;
+	return 0;
+}
+
+static int
+i915_scheduler_priority_preempt_set(void *data, u64 val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	scheduler->priority_level_preempt = (u32) val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_scheduler_priority_preempt_fops,
+			i915_scheduler_priority_preempt_get,
+			i915_scheduler_priority_preempt_set,
+			"%lld\n");
+
+static int
+i915_scheduler_min_flying_get(void *data, u64 *val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	*val = (u64) scheduler->min_flying;
+	return 0;
+}
+
+static int
+i915_scheduler_min_flying_set(void *data, u64 val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	scheduler->min_flying = (u32) val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_scheduler_min_flying_fops,
+			i915_scheduler_min_flying_get,
+			i915_scheduler_min_flying_set,
+			"%llu\n");
+
+static int
+i915_scheduler_file_queue_max_get(void *data, u64 *val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	*val = (u64) scheduler->file_queue_max;
+	return 0;
+}
+
+static int
+i915_scheduler_file_queue_max_set(void *data, u64 val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	scheduler->file_queue_max = (u32) val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_scheduler_file_queue_max_fops,
+			i915_scheduler_file_queue_max_get,
+			i915_scheduler_file_queue_max_set,
+			"%llu\n");
+
+static int
+i915_scheduler_dump_flags_get(void *data, u64 *val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	*val = scheduler->dump_flags;
+
+	return 0;
+}
+
+static int
+i915_scheduler_dump_flags_set(void *data, u64 val)
+{
+	struct drm_device       *dev       = data;
+	struct drm_i915_private *dev_priv  = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+	scheduler->dump_flags = lower_32_bits(val) & I915_SF_DUMP_MASK;
+
+	if (val & 1)
+		i915_scheduler_dump_all(dev, "DebugFS");
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_scheduler_dump_flags_fops,
+			i915_scheduler_dump_flags_get,
+			i915_scheduler_dump_flags_set,
+			"0x%llx\n");
+
 static int i915_frequency_info(struct seq_file *m, void *unused)
 {
 	struct drm_info_node *node = m->private;
@@ -1329,7 +1656,8 @@ static int i915_hangcheck_info(struct seq_file *m, void *unused)
 	struct intel_engine_cs *ring;
 	u64 acthd[I915_NUM_RINGS];
 	u32 seqno[I915_NUM_RINGS];
-	int i;
+	u32 instdone[I915_NUM_INSTDONE_REG];
+	int i, j;
 
 	if (!i915.enable_hangcheck) {
 		seq_printf(m, "Hangcheck disabled\n");
@@ -1342,6 +1670,8 @@ static int i915_hangcheck_info(struct seq_file *m, void *unused)
 		seqno[i] = ring->get_seqno(ring, false);
 		acthd[i] = intel_ring_get_active_head(ring);
 	}
+
+	i915_get_extra_instdone(dev, instdone);
 
 	intel_runtime_pm_put(dev_priv);
 
@@ -1363,6 +1693,21 @@ static int i915_hangcheck_info(struct seq_file *m, void *unused)
 			   (long long)ring->hangcheck.max_acthd);
 		seq_printf(m, "\tscore = %d\n", ring->hangcheck.score);
 		seq_printf(m, "\taction = %d\n", ring->hangcheck.action);
+
+		if (ring->id == RCS) {
+			seq_puts(m, "\tinstdone read =");
+
+			for (j = 0; j < I915_NUM_INSTDONE_REG; j++)
+				seq_printf(m, " 0x%08x", instdone[j]);
+
+			seq_puts(m, "\n\tinstdone accu =");
+
+			for (j = 0; j < I915_NUM_INSTDONE_REG; j++)
+				seq_printf(m, " 0x%08x",
+					   ring->hangcheck.instdone[j]);
+
+			seq_puts(m, "\n");
+		}
 	}
 
 	return 0;
@@ -1922,7 +2267,7 @@ static int i915_context_status(struct seq_file *m, void *unused)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_engine_cs *ring;
 	struct intel_context *ctx;
-	int ret, i;
+	int ret, i, count = 0;
 
 	ret = mutex_lock_interruptible(&dev->struct_mutex);
 	if (ret)
@@ -1935,6 +2280,7 @@ static int i915_context_status(struct seq_file *m, void *unused)
 
 		seq_puts(m, "HW context ");
 		describe_ctx(m, ctx);
+		count++;
 		for_each_ring(ring, dev_priv, i) {
 			if (ring->default_context == ctx)
 				seq_printf(m, "(default context %s) ",
@@ -1963,18 +2309,23 @@ static int i915_context_status(struct seq_file *m, void *unused)
 		seq_putc(m, '\n');
 	}
 
+	seq_printf(m, "Total: %d contexts\n", count);
+
 	mutex_unlock(&dev->struct_mutex);
 
 	return 0;
 }
 
 static void i915_dump_lrc_obj(struct seq_file *m,
-			      struct intel_engine_cs *ring,
-			      struct drm_i915_gem_object *ctx_obj)
+			      struct intel_context *ctx,
+			      struct intel_engine_cs *ring)
 {
 	struct page *page;
 	uint32_t *reg_state;
 	int j;
+	struct drm_i915_gem_object *ctx_obj = ctx->engine[ring->id].state;
+	int zeros_start = 0;
+	int zeros_length = 0;
 	unsigned long ggtt_offset = 0;
 
 	if (ctx_obj == NULL) {
@@ -1984,7 +2335,7 @@ static void i915_dump_lrc_obj(struct seq_file *m,
 	}
 
 	seq_printf(m, "CONTEXT: %s %u\n", ring->name,
-		   intel_execlists_ctx_id(ctx_obj));
+		   intel_execlists_ctx_id(ctx, ring));
 
 	if (!i915_gem_obj_ggtt_bound(ctx_obj))
 		seq_puts(m, "\tNot bound in GGTT\n");
@@ -2000,12 +2351,48 @@ static void i915_dump_lrc_obj(struct seq_file *m,
 	if (!WARN_ON(page == NULL)) {
 		reg_state = kmap_atomic(page);
 
-		for (j = 0; j < 0x600 / sizeof(u32) / 4; j += 4) {
-			seq_printf(m, "\t[0x%08lx] 0x%08x 0x%08x 0x%08x 0x%08x\n",
-				   ggtt_offset + 4096 + (j * 4),
-				   reg_state[j], reg_state[j + 1],
-				   reg_state[j + 2], reg_state[j + 3]);
+		for (j = 0; j < (PAGE_SIZE * 4) / sizeof(u32) / 4; j += 4) {
+			/* ZERO removal - make the listing smaller */
+			if (reg_state[j] == 0 &&
+			    reg_state[j+1] == 0 &&
+			    reg_state[j+2] == 0 &&
+			    reg_state[j+3] == 0) {
+				/* Only zeros found - count and skip output */
+				if (zeros_length == 0)
+					zeros_start = j;
+
+				zeros_length += 4;
+
+			} else if (zeros_length > 0) {
+				/* non-zeros found after zeros */
+				seq_printf(m, "\t[0x%08lx] %d zeros skipped\n",
+				   ggtt_offset + 4096 + (zeros_start * 4),
+				   zeros_length);
+
+				seq_printf(m,
+				  "\t[0x%08lx] 0x%08x 0x%08x 0x%08x 0x%08x\n",
+				  ggtt_offset + 4096 + (j * 4),
+				  reg_state[j], reg_state[j + 1],
+				  reg_state[j + 2], reg_state[j + 3]);
+
+				zeros_length = 0;
+			} else {
+				/* non-zeros on line output it */
+				seq_printf(m,
+				"\t[0x%08lx] 0x%08x 0x%08x 0x%08x 0x%08x\n",
+					   ggtt_offset + 4096 + (j * 4),
+					   reg_state[j], reg_state[j + 1],
+					   reg_state[j + 2], reg_state[j + 3]);
+			}
 		}
+
+		if (zeros_length > 0) {
+			seq_printf(m, "\t[0x%08lx] %d zeros skipped\n",
+			ggtt_offset + 4096 + (zeros_start * 4),
+			zeros_length);
+			zeros_length = 0;
+		}
+
 		kunmap_atomic(reg_state);
 	}
 
@@ -2033,8 +2420,7 @@ static int i915_dump_lrc(struct seq_file *m, void *unused)
 	list_for_each_entry(ctx, &dev_priv->context_list, link) {
 		for_each_ring(ring, dev_priv, i) {
 			if (ring->default_context != ctx)
-				i915_dump_lrc_obj(m, ring,
-						  ctx->engine[i].state);
+				i915_dump_lrc_obj(m, ctx, ring);
 		}
 	}
 
@@ -2108,11 +2494,8 @@ static int i915_execlists(struct seq_file *m, void *data)
 
 		seq_printf(m, "\t%d requests in queue\n", count);
 		if (head_req) {
-			struct drm_i915_gem_object *ctx_obj;
-
-			ctx_obj = head_req->ctx->engine[ring_id].state;
 			seq_printf(m, "\tHead request id: %u\n",
-				   intel_execlists_ctx_id(ctx_obj));
+				   intel_execlists_ctx_id(head_req->ctx, ring));
 			seq_printf(m, "\tHead request tail: %u\n",
 				   head_req->tail);
 		}
@@ -3274,6 +3657,173 @@ static int i915_drrs_status(struct seq_file *m, void *unused)
 
 	if (!active_crtc_cnt)
 		seq_puts(m, "No active crtc found\n");
+
+	return 0;
+}
+static int i915_ringstat_info(struct seq_file *m, void *data)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct intel_engine_cs *ring;
+	struct intel_ringbuffer *ringbuf;
+	struct drm_i915_gem_request *gem_request;
+	int ret, i;
+	uint32_t seqno;
+
+	struct ring_info {
+		char * name;
+		int id;
+		int size;
+		int head;
+		int tail;
+		int seqno;
+		int jiffies;
+	};
+	struct ring_info ringstats[I915_NUM_RINGS] = {{0},{0},{0},{0}};
+	/* Need to lock to get valid snapshot - keep overheads to min */
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret) {
+		return ret;
+	}
+
+	if (i915.enable_execlists) {
+		for_each_ring(ring, dev_priv, i) {
+			/*get current completed seqno */
+			seqno = ring->get_seqno(ring, true);
+
+			ringstats[i].name = (char *) ring->name;
+			ringstats[i].id = ring->id;
+			ringstats[i].size = -1;
+			ringstats[i].tail = -1;
+			ringstats[i].seqno = -1; /* set to -1 to indicate empty */
+			ringstats[i].jiffies = -1;
+			ringstats[i].head = -1;
+
+			list_for_each_entry(gem_request, &ring->request_list, list) {
+				/* skip the request if completed */
+				if(i915_seqno_passed(seqno, gem_request->seqno))
+					continue;
+
+				ringstats[i].seqno = gem_request->seqno;
+				ringstats[i].head = 0;
+				break;
+			}
+		}
+	} else {
+		for_each_ring(ring, dev_priv, i) {
+			/*get current completed seqno */
+			seqno = ring->get_seqno(ring, true);
+
+			ringbuf = ring->buffer;
+			ringstats[i].name = (char *) ring->name;
+			ringstats[i].id = ring->id;
+			ringstats[i].size = ringbuf->size;
+			ringstats[i].tail = ringbuf->tail;
+			ringstats[i].seqno = -1; /* set to -1 to indicate empty */
+			ringstats[i].jiffies = 0;
+			ringstats[i].head = ringstats[i].tail;
+
+			list_for_each_entry(gem_request, &ring->request_list, list) {
+				/* skip the request if completed */
+				if(i915_seqno_passed(seqno, gem_request->seqno))
+					continue;
+
+				ringstats[i].jiffies = (int) (jiffies - gem_request->emitted_jiffies);
+				ringstats[i].seqno = gem_request->seqno;
+				ringstats[i].head = gem_request->head;
+				break;
+			}
+		}
+	}
+	mutex_unlock(&dev->struct_mutex);
+
+	/* Now Print the data out */
+	for_each_ring(ring, dev_priv, i) {
+		seq_printf(m,"%s:%d:%d:%d:%d:%d:%d\n",
+			ringstats[i].name,
+			ringstats[i].id,
+			ringstats[i].size,
+			ringstats[i].head,
+			ringstats[i].tail,
+			ringstats[i].seqno,
+			ringstats[i].jiffies );
+	}
+	return 0;
+}
+
+static int i915_scheduler_info(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct i915_scheduler   *scheduler = dev_priv->scheduler;
+	struct i915_scheduler_stats *stats = scheduler->stats;
+	struct i915_scheduler_stats_nodes node_stats[I915_NUM_RINGS];
+	struct intel_engine_cs *ring;
+	char   str[50 * (I915_NUM_RINGS + 1)], name[50], *ptr;
+	int ret, i, r;
+
+	ret = mutex_lock_interruptible(&dev->mode_config.mutex);
+	if (ret)
+		return ret;
+
+#define PRINT_VAR(name, fmt, var)					\
+	do {								\
+		sprintf(str, "%-22s", name);				\
+		ptr = str + strlen(str);				\
+		for_each_ring(ring, dev_priv, r) {			\
+			sprintf(ptr, " %10" fmt, var);			\
+			ptr += strlen(ptr);				\
+		}							\
+		seq_printf(m, "%s\n", str);				\
+	} while (0)
+
+	PRINT_VAR("Ring name:",             "s", dev_priv->ring[r].name);
+	PRINT_VAR("  Ring seqno",           "d", ring->get_seqno(ring, false));
+	seq_putc(m, '\n');
+
+	seq_puts(m, "Batch submissions:\n");
+	PRINT_VAR("  Queued",               "u", stats[r].queued);
+	PRINT_VAR("  Submitted",            "u", stats[r].submitted);
+	PRINT_VAR("  Completed",            "u", stats[r].completed);
+	PRINT_VAR("  Expired",              "u", stats[r].expired);
+	seq_putc(m, '\n');
+
+	seq_puts(m, "Flush counts:\n");
+	PRINT_VAR("  By object",            "u", stats[r].flush_obj);
+	PRINT_VAR("  By request",           "u", stats[r].flush_req);
+	PRINT_VAR("  By stamp",             "u", stats[r].flush_stamp);
+	PRINT_VAR("  Blanket",              "u", stats[r].flush_all);
+	PRINT_VAR("  Entries bumped",       "u", stats[r].flush_bump);
+	PRINT_VAR("  Entries submitted",    "u", stats[r].flush_submit);
+	seq_putc(m, '\n');
+
+	seq_puts(m, "Miscellaneous:\n");
+	PRINT_VAR("  ExecEarly retry",      "u", stats[r].exec_early);
+	PRINT_VAR("  ExecFinal requeue",    "u", stats[r].exec_again);
+	PRINT_VAR("  ExecFinal killed",     "u", stats[r].exec_dead);
+	PRINT_VAR("  Fence wait",           "u", stats[r].fence_wait);
+	PRINT_VAR("  Fence wait again",     "u", stats[r].fence_again);
+	PRINT_VAR("  Fence wait ignore",    "u", stats[r].fence_ignore);
+	PRINT_VAR("  Fence supplied",       "u", stats[r].fence_got);
+	PRINT_VAR("  Hung flying",          "u", stats[r].kill_flying);
+	PRINT_VAR("  Hung queued",          "u", stats[r].kill_queued);
+	seq_putc(m, '\n');
+
+	seq_puts(m, "Queue contents:\n");
+	for_each_ring(ring, dev_priv, i)
+		i915_scheduler_query_stats(ring, node_stats + ring->id);
+
+	for (i = 0; i < (I915_SQS_MAX + 1); i++) {
+		sprintf(name, "  %s", i915_scheduler_queue_status_str(i));
+		PRINT_VAR(name, "d", node_stats[r].counts[i]);
+	}
+	seq_putc(m, '\n');
+
+#undef PRINT_VAR
+
+	mutex_unlock(&dev->mode_config.mutex);
 
 	return 0;
 }
@@ -5127,6 +5677,33 @@ static int i915_sseu_status(struct seq_file *m, void *unused)
 	return 0;
 }
 
+static int
+i915_mvp_enable_get(void *data, u64 *val)
+{
+	*val = (u64) i915_mvp_is_enabled();
+	return 0;
+}
+
+static int
+i915_mvp_enable_set(void *data, u64 val)
+{
+	struct drm_device *dev = data;
+	int ret;
+
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret)
+		return ret;
+
+	ret = i915_mvp_enable(dev, (bool)val);
+	mutex_unlock(&dev->struct_mutex);
+	return ret;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_mvp_enable_fops,
+			i915_mvp_enable_get,
+			i915_mvp_enable_set,
+			"%lld\n");
+
 static int i915_forcewake_open(struct inode *inode, struct file *file)
 {
 	struct drm_device *dev = inode->i_private;
@@ -5197,6 +5774,7 @@ static int i915_debugfs_create(struct dentry *root,
 static const struct drm_info_list i915_debugfs_list[] = {
 	{"i915_capabilities", i915_capabilities, 0},
 	{"i915_gem_objects", i915_gem_object_info, 0},
+	{"i915_gem_aperture", i915_gem_aperture_info, 0},
 	{"i915_gem_gtt", i915_gem_gtt_info, 0},
 	{"i915_gem_pinned", i915_gem_gtt_info, 0, (void *) PINNED_LIST},
 	{"i915_gem_active", i915_gem_object_list_info, 0, (void *) ACTIVE_LIST},
@@ -5242,12 +5820,59 @@ static const struct drm_info_list i915_debugfs_list[] = {
 	{"i915_semaphore_status", i915_semaphore_status, 0},
 	{"i915_shared_dplls_info", i915_shared_dplls_info, 0},
 	{"i915_dp_mst_info", i915_dp_mst_info, 0},
+	{"i915_scheduler_info", i915_scheduler_info, 0},
 	{"i915_wa_registers", i915_wa_registers, 0},
 	{"i915_ddb_info", i915_ddb_info, 0},
 	{"i915_sseu_status", i915_sseu_status, 0},
 	{"i915_drrs_status", i915_drrs_status, 0},
 	{"i915_rps_boost_info", i915_rps_boost_info, 0},
+	{"i915_ringstats", i915_ringstat_info, 0},
 };
+
+static int
+i915_slice_enabled_get(void *data, u64 *val)
+{
+	struct drm_device *dev = data;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	*val = dev_priv->ruling_sseu;
+	return 0;
+}
+
+static int
+i915_slice_enabled_set(void *data, u64 val)
+{
+	struct drm_device *dev = data;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct intel_device_info *info = (struct intel_device_info *)&dev_priv->info;
+	int ret;
+
+	ret = mutex_lock_interruptible(&dev->struct_mutex);
+	if (ret)
+		return ret;
+
+	if (!info->has_slice_pg || val > info->slice_total) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (val == 0) {
+		dev_priv->sseu_override = 0;
+	} else {
+		dev_priv->sseu_override = 1;
+	}
+	dev_priv->ruling_sseu = (u32)val;
+
+out:
+	mutex_unlock(&dev->struct_mutex);
+	return ret;
+
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_slice_enabled_fops,
+			i915_slice_enabled_get, i915_slice_enabled_set,
+			"%llu\n");
+
 #define I915_DEBUGFS_ENTRIES ARRAY_SIZE(i915_debugfs_list)
 
 static const struct i915_debugfs_files {
@@ -5264,6 +5889,13 @@ static const struct i915_debugfs_files {
 	{"i915_gem_drop_caches", &i915_drop_caches_fops},
 	{"i915_error_state", &i915_error_state_fops},
 	{"i915_next_seqno", &i915_next_seqno_fops},
+	{"i915_scheduler_priority_min", &i915_scheduler_priority_min_fops},
+	{"i915_scheduler_priority_max", &i915_scheduler_priority_max_fops},
+	{"i915_scheduler_priority_bump", &i915_scheduler_priority_bump_fops},
+	{"i915_scheduler_priority_preempt", &i915_scheduler_priority_preempt_fops},
+	{"i915_scheduler_min_flying", &i915_scheduler_min_flying_fops},
+	{"i915_scheduler_file_queue_max", &i915_scheduler_file_queue_max_fops},
+	{"i915_scheduler_dump_flags", &i915_scheduler_dump_flags_fops},
 	{"i915_display_crc_ctl", &i915_display_crc_ctl_fops},
 	{"i915_pri_wm_latency", &i915_pri_wm_latency_fops},
 	{"i915_spr_wm_latency", &i915_spr_wm_latency_fops},
@@ -5271,7 +5903,9 @@ static const struct i915_debugfs_files {
 	{"i915_fbc_false_color", &i915_fbc_fc_fops},
 	{"i915_dp_test_data", &i915_displayport_test_data_fops},
 	{"i915_dp_test_type", &i915_displayport_test_type_fops},
-	{"i915_dp_test_active", &i915_displayport_test_active_fops}
+	{"i915_dp_test_active", &i915_displayport_test_active_fops},
+	{"i915_mvp_enable", &i915_mvp_enable_fops},
+	{"i915_slice_enabled", &i915_slice_enabled_fops}
 };
 
 void intel_display_crc_init(struct drm_device *dev)

@@ -451,6 +451,23 @@ static const struct drm_i915_reg_descriptor gen7_render_regs[] = {
 	REG32(GEN7_GPGPU_DISPATCHDIMX),
 	REG32(GEN7_GPGPU_DISPATCHDIMY),
 	REG32(GEN7_GPGPU_DISPATCHDIMZ),
+	REG64(CS_GPR(0)),
+	REG64(CS_GPR(1)),
+	REG64(CS_GPR(2)),
+	REG64(CS_GPR(3)),
+	REG64(CS_GPR(4)),
+	REG64(CS_GPR(5)),
+	REG64(CS_GPR(6)),
+	REG64(CS_GPR(7)),
+	REG64(CS_GPR(8)),
+	REG64(CS_GPR(9)),
+	REG64(CS_GPR(10)),
+	REG64(CS_GPR(11)),
+	REG64(CS_GPR(12)),
+	REG64(CS_GPR(13)),
+	REG64(CS_GPR(14)),
+	REG64(CS_GPR(15)),
+	REG32(GEN7_LRA_LIMITS(1)),
 	REG64(GEN7_SO_NUM_PRIMS_WRITTEN(0)),
 	REG64(GEN7_SO_NUM_PRIMS_WRITTEN(1)),
 	REG64(GEN7_SO_NUM_PRIMS_WRITTEN(2)),
@@ -466,6 +483,7 @@ static const struct drm_i915_reg_descriptor gen7_render_regs[] = {
 	REG32(GEN7_L3SQCREG1),
 	REG32(GEN7_L3CNTLREG2),
 	REG32(GEN7_L3CNTLREG3),
+	REG32(GEN7_L3SQCREG4),
 	REG32(HSW_SCRATCH1,
 	      .mask = ~HSW_SCRATCH1_L3_DATA_ATOMICS_DISABLE,
 	      .value = 0),
@@ -490,6 +508,17 @@ static const struct drm_i915_reg_descriptor ivb_master_regs[] = {
 static const struct drm_i915_reg_descriptor hsw_master_regs[] = {
 	REG32(FORCEWAKE_MT),
 	REG32(DERRMR),
+};
+
+static const struct drm_i915_reg_descriptor gen7_vcs_regs[] = {
+	REG32(MFD_ERROR_STATUS),
+	REG32(MFD_MB_COUNT),
+    REG32(MFC_BITSTREAM_BYTECOUNT_FRAME),
+    REG32(MFC_BITSTREAM_SE_BITCOUNT_FRAME),
+    REG32(MFC_IMAGE_STATUS_MASK),
+    REG32(MFC_IMAGE_STATUS_CONTROL),
+	REG32(MFC_QP_STATUS_COUNT),
+	REG32(MFC_BITSTREAM_BYTECOUNT_SLICE),
 };
 
 #undef REG64
@@ -722,6 +751,8 @@ int i915_cmd_parser_init_ring(struct intel_engine_cs *ring)
 		cmd_tables = gen7_video_cmds;
 		cmd_table_count = ARRAY_SIZE(gen7_video_cmds);
 		ring->get_cmd_length_mask = gen7_bsd_get_cmd_length_mask;
+		ring->reg_table = gen7_vcs_regs;
+		ring->reg_count = ARRAY_SIZE(gen7_vcs_regs);
 		break;
 	case BCS:
 		if (IS_HASWELL(ring->dev)) {

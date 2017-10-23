@@ -20,6 +20,10 @@ config DRM_I915
 	select INPUT if ACPI
 	select ACPI_VIDEO if ACPI
 	select ACPI_BUTTON if ACPI
+	select MMU_NOTIFIER
+	# ANDROID is required for SYNC
+	select ANDROID
+	select SYNC
 	help
 	  Choose this option if you have a system that has "Intel Graphics
 	  Media Accelerator" or "HD Graphics" integrated graphics,

@@ -41,7 +41,7 @@
  * be moved to FW_FAILED.
  */
 
-#define I915_CSR_SKL "i915/skl_dmc_ver1.bin"
+#define I915_CSR_SKL "i915/skl_dmc_ver1_26.bin"
 #define I915_CSR_BXT "i915/bxt_dmc_ver1.bin"
 
 MODULE_FIRMWARE(I915_CSR_SKL);
@@ -178,10 +178,10 @@ struct stepping_info {
 };
 
 static const struct stepping_info skl_stepping_info[] = {
-		{'A', '0'}, {'B', '0'}, {'C', '0'},
-		{'D', '0'}, {'E', '0'}, {'F', '0'},
-		{'G', '0'}, {'H', '0'}, {'I', '0'},
-		{'J', '0'}, {'K', '0'}
+	{'A', '0'}, {'B', '0'}, {'C', '0'},
+	{'D', '0'}, {'E', '0'}, {'F', '0'},
+	{'G', '0'}, {'H', '0'}, {'I', '0'},
+	{'J', '0'}, {'K', '0'}
 };
 
 static struct stepping_info bxt_stepping_info[] = {

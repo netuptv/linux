@@ -542,6 +542,9 @@
 
 #define OACONTROL 0x2360
 
+/* There are 16 64-bit RCS general purpose registers used by MI_MATH */
+#define CS_GPR(i) (0x2600 + (i) * 8)
+
 #define _GEN7_PIPEA_DE_LOAD_SL	0x70068
 #define _GEN7_PIPEB_DE_LOAD_SL	0x71068
 #define GEN7_PIPE_DE_LOAD_SL(pipe) _PIPE(pipe, \
@@ -4145,6 +4148,13 @@ enum skl_disp_power_wells {
 #define TV_V_LUMA(i)		(0x68300 + (i) * 4) /* 43 registers */
 #define TV_V_CHROMA(i)		(0x68400 + (i) * 4) /* 43 registers */
 
+/* gamt regs */
+#define GEN8_L3_LRA_1_GPGPU 0x4dd4
+#define   GEN8_L3_LRA_1_GPGPU_DEFAULT_VALUE_BDW  0x67F1427F /* max/min for LRA1/2 */
+#define   GEN8_L3_LRA_1_GPGPU_DEFAULT_VALUE_CHV  0x5FF101FF /* max/min for LRA1/2 */
+#define   GEN9_L3_LRA_1_GPGPU_DEFAULT_VALUE_SKL  0x67F1427F /*    "        " */
+#define   GEN9_L3_LRA_1_GPGPU_DEFAULT_VALUE_BXT  0x5FF101FF /*    "        " */
+
 /* Display Port */
 #define DP_A				0x64000 /* eDP */
 #define DP_B				0x64100
@@ -5861,6 +5871,8 @@ enum skl_disp_power_wells {
 #define GEN8_PCU_IIR 0x444e8
 #define GEN8_PCU_IER 0x444ec
 
+#define GEN8_OA_IMR  0x2b20
+
 #define ILK_DISPLAY_CHICKEN2	0x42004
 /* Required on all Ironlake and Sandybridge according to the B-Spec. */
 #define  ILK_ELPIN_409_SELECT	(1 << 25)
@@ -5955,6 +5967,8 @@ enum skl_disp_power_wells {
 #define GEN8_L3SQCREG4				0xb118
 #define  GEN8_LQSC_RO_PERF_DIS			(1<<27)
 #define  GEN8_LQSC_FLUSH_COHERENT_LINES		(1<<21)
+
+#define GEN8_FORCE_TO_NONPRIV_0_RCS 0x24D0
 
 /* GEN8 chicken */
 #define HDC_CHICKEN0				0x7300
@@ -8157,5 +8171,17 @@ enum skl_disp_power_wells {
 #define GEN9_MFX1_MOCS_0	0xca00	/* Media 1 MOCS base register*/
 #define GEN9_VEBOX_MOCS_0	0xcb00	/* Video MOCS base register*/
 #define GEN9_BLT_MOCS_0		0xcc00	/* Blitter MOCS base register*/
+
+#define MFD_ERROR_STATUS 0x12400
+#define MFD_MB_COUNT 0x12468
+#define MFC_BITSTREAM_BYTECOUNT_FRAME 0x124A0
+#define MFC_BITSTREAM_SE_BITCOUNT_FRAME 0x124A4
+#define MFC_IMAGE_STATUS_MASK 0x124B4
+#define MFC_IMAGE_STATUS_CONTROL 0x124B8
+#define MFC_QP_STATUS_COUNT      0x124BC
+#define MFC_BITSTREAM_BYTECOUNT_SLICE 0x124D0
+
+#define GEN8_OA_CTX_CONTROL 0x2360
+#define GEN8_RC6_WA_BB      0x2058
 
 #endif /* _I915_REG_H_ */

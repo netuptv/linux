@@ -44,6 +44,7 @@
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_rect.h>
 #include <linux/dma_remapping.h>
+#include "i915_scheduler.h"
 
 /* Primary plane formats for gen <= 3 */
 static const uint32_t i8xx_primary_formats[] = {
@@ -5444,6 +5445,9 @@ static void intel_update_max_cdclk(struct drm_device *dev)
 static void intel_update_cdclk(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
+
+    if (!dev_priv->display.get_display_clock_speed)
+        return;
 
 	dev_priv->cdclk_freq = dev_priv->display.get_display_clock_speed(dev);
 	DRM_DEBUG_DRIVER("Current CD clock rate: %d kHz\n",
@@ -11198,6 +11202,8 @@ static bool use_mmio_flip(struct intel_engine_cs *ring,
 		return true;
 	else if (i915.enable_execlists)
 		return true;
+	else if (i915_scheduler_is_enabled(ring->dev))
+		return true;
 	else
 		return ring != i915_gem_request_get_ring(obj->last_write_req);
 }
@@ -11310,8 +11316,9 @@ static void intel_mmio_flip_work_func(struct work_struct *work)
 		WARN_ON(__i915_wait_request(mmio_flip->req,
 					    mmio_flip->crtc->reset_counter,
 					    false, NULL,
-					    &mmio_flip->i915->rps.mmioflips));
-		i915_gem_request_unreference__unlocked(mmio_flip->req);
+					    &mmio_flip->i915->rps.mmioflips,
+					    false));
+		i915_gem_request_unreference(mmio_flip->req);
 	}
 
 	intel_do_mmio_flip(mmio_flip);
@@ -11370,7 +11377,7 @@ static bool __intel_pageflip_stall_check(struct drm_device *dev,
 
 	if (work->flip_ready_vblank == 0) {
 		if (work->flip_queued_req &&
-		    !i915_gem_request_completed(work->flip_queued_req, true))
+		    !i915_gem_request_completed(work->flip_queued_req))
 			return false;
 
 		work->flip_ready_vblank = drm_crtc_vblank_count(crtc);
