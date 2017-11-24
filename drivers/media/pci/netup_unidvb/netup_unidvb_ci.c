@@ -115,7 +115,7 @@ reset:
 	}
 	if (!(ci_stat & (BIT_CAM_READY << shift)) && reset_counter > 0) {
 		dev_dbg(&dev->pci_dev->dev,
-			"%s(), CI %i: CAMP reset timeout! Will try again..\n",
+			"%s(), CI %i: CAM reset timeout, will try again\n",
 			 __func__, state->nr);
 		reset_counter--;
 		goto reset;
