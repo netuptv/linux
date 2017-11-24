@@ -56,14 +56,14 @@ static int netup_unidvb_ci_slot_ts_ctl(struct dvb_ca_en50221 *en50221,
 	struct netup_unidvb_dev *dev = state->dev;
 	u16 shift = (state->nr == 1) ? CAM1_SHIFT : 0;
 
-	dev_dbg(&dev->pci_dev->dev, "%s(): CAM_CTRLSTAT=0x%x\n",
-		__func__, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
+	dev_dbg(&dev->pci_dev->dev, "%s(), CI %i: CAM_CTRLSTAT=0x%x\n",
+		__func__, state->nr, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
 	if (slot != 0)
 		return -EINVAL;
 	/* pass data to CAM module */
 	writew(BIT_CAM_BYPASS << shift, dev->bmmio0 + CAM_CTRLSTAT_CLR);
-	dev_dbg(&dev->pci_dev->dev, "%s(): CAM_CTRLSTAT=0x%x done\n",
-		__func__, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
+	dev_dbg(&dev->pci_dev->dev, "%s(), CI %i: CAM_CTRLSTAT=0x%x done\n",
+		__func__, state->nr, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
 	return 0;
 }
 
@@ -73,7 +73,7 @@ static int netup_unidvb_ci_slot_shutdown(struct dvb_ca_en50221 *en50221,
 	struct netup_ci_state *state = en50221->data;
 	struct netup_unidvb_dev *dev = state->dev;
 
-	dev_dbg(&dev->pci_dev->dev, "%s()\n", __func__);
+	dev_dbg(&dev->pci_dev->dev, "%s(), CI %i\n", __func__, state->nr);
 	return 0;
 }
 
@@ -90,13 +90,13 @@ static int netup_unidvb_ci_slot_reset(struct dvb_ca_en50221 *en50221,
 	/* Enable bypass on CAM reset: */
 	writew(BIT_CAM_BYPASS << shift, dev->bmmio0 + CAM_CTRLSTAT_READ_SET);
 
-	dev_dbg(&dev->pci_dev->dev, "%s(): CAM_CTRLSTAT_READ_SET=0x%x\n",
-		__func__, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
+	dev_dbg(&dev->pci_dev->dev, "%s(), CI %i: CAM_CTRLSTAT_READ_SET=0x%x\n",
+		__func__, state->nr, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
 reset:
 	timeout = jiffies + msecs_to_jiffies(5000);
 	/* start reset */
 	writew(BIT_CAM_RESET << shift, dev->bmmio0 + CAM_CTRLSTAT_READ_SET);
-	dev_dbg(&dev->pci_dev->dev, "%s(): waiting for reset\n", __func__);
+	dev_dbg(&dev->pci_dev->dev, "%s(), CI %i: waiting for reset\n", __func__, slot);
 	/* wait until reset done */
 	while (time_before(jiffies, timeout)) {
 		ci_stat = readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET);
@@ -106,8 +106,8 @@ reset:
 	}
 	if (!(ci_stat & (BIT_CAM_READY << shift)) && reset_counter > 0) {
 		dev_dbg(&dev->pci_dev->dev,
-			"%s(): CAMP reset timeout! Will try again..\n",
-			 __func__);
+			"%s(), CI %i: CAM reset timeout, will try again\n",
+			 __func__, state->nr);
 		reset_counter--;
 		goto reset;
 	}
@@ -122,8 +122,8 @@ static int netup_unidvb_poll_ci_slot_status(struct dvb_ca_en50221 *en50221,
 	u16 shift = (state->nr == 1) ? CAM1_SHIFT : 0;
 	u16 ci_stat = 0;
 
-	dev_dbg(&dev->pci_dev->dev, "%s(): CAM_CTRLSTAT_READ_SET=0x%x\n",
-		__func__, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
+	dev_dbg(&dev->pci_dev->dev, "%s(), CI %i: CAM_CTRLSTAT_READ_SET=0x%x\n",
+		__func__, state->nr, readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET));
 	ci_stat = readw(dev->bmmio0 + CAM_CTRLSTAT_READ_SET);
 	if (ci_stat & (BIT_CAM_READY << shift)) {
 		state->status = DVB_CA_EN50221_POLL_CAM_PRESENT |
@@ -144,7 +144,7 @@ static int netup_unidvb_ci_read_attribute_mem(struct dvb_ca_en50221 *en50221,
 	u8 val = *((u8 __force *)state->membase8_config + addr);
 
 	dev_dbg(&dev->pci_dev->dev,
-		"%s(): addr=0x%x val=0x%x\n", __func__, addr, val);
+		"%s(), CI %i: addr=0x%x val=0x%x\n", __func__, state->nr, addr, val);
 	return val;
 }
 
@@ -155,7 +155,7 @@ static int netup_unidvb_ci_write_attribute_mem(struct dvb_ca_en50221 *en50221,
 	struct netup_unidvb_dev *dev = state->dev;
 
 	dev_dbg(&dev->pci_dev->dev,
-		"%s(): addr=0x%x data=0x%x\n", __func__, addr, data);
+		"%s(), CI %i: addr=0x%x data=0x%x\n", __func__, state->nr, addr, data);
 	*((u8 __force *)state->membase8_config + addr) = data;
 	return 0;
 }
@@ -168,7 +168,7 @@ static int netup_unidvb_ci_read_cam_ctl(struct dvb_ca_en50221 *en50221,
 	u8 val = *((u8 __force *)state->membase8_io + addr);
 
 	dev_dbg(&dev->pci_dev->dev,
-		"%s(): addr=0x%x val=0x%x\n", __func__, addr, val);
+		"%s(), CI %i: addr=0x%x val=0x%x\n", __func__, state->nr, addr, val);
 	return val;
 }
 
@@ -179,7 +179,7 @@ static int netup_unidvb_ci_write_cam_ctl(struct dvb_ca_en50221 *en50221,
 	struct netup_unidvb_dev *dev = state->dev;
 
 	dev_dbg(&dev->pci_dev->dev,
-		"%s(): addr=0x%x data=0x%x\n", __func__, addr, data);
+		"%s(), CI %i: addr=0x%x data=0x%x\n", __func__, state->nr, addr, data);
 	*((u8 __force *)state->membase8_io + addr) = data;
 	return 0;
 }
@@ -230,7 +230,7 @@ void netup_unidvb_ci_unregister(struct netup_unidvb_dev *dev, int num)
 {
 	struct netup_ci_state *state;
 
-	dev_dbg(&dev->pci_dev->dev, "%s()\n", __func__);
+	dev_dbg(&dev->pci_dev->dev, "%s(), CI %i\n", __func__, num);
 	if (num < 0 || num > 1) {
 		dev_err(&dev->pci_dev->dev, "%s(): invalid CI adapter %d\n",
 				__func__, num);
