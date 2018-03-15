@@ -2875,11 +2875,17 @@ static int cxd2841er_get_frontend(struct dvb_frontend *fe)
 	else if (priv->state == STATE_ACTIVE_TC)
 		cxd2841er_read_status_tc(fe, &status);
 
-	if (status & FE_HAS_LOCK) {
+	if (priv->state == STATE_ACTIVE_S || priv->state == STATE_ACTIVE_TC) {
 		cxd2841er_read_signal_strength(fe, &strength);
 		p->strength.len = 1;
 		p->strength.stat[0].scale = FE_SCALE_RELATIVE;
 		p->strength.stat[0].uvalue = strength;
+	} else {
+		p->strength.len = 1;
+		p->strength.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
+	}
+
+	if (status & FE_HAS_LOCK) {
 		cxd2841er_read_snr(fe, &snr);
 		p->cnr.len = 1;
 		p->cnr.stat[0].scale = FE_SCALE_DECIBEL;
@@ -2893,8 +2899,6 @@ static int cxd2841er_get_frontend(struct dvb_frontend *fe)
 		p->post_bit_error.stat[0].scale = FE_SCALE_COUNTER;
 		p->post_bit_error.stat[0].uvalue = ber;
 	} else {
-		p->strength.len = 1;
-		p->strength.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
 		p->cnr.len = 1;
 		p->cnr.stat[0].scale = FE_SCALE_NOT_AVAILABLE;
 		p->block_error.len = 1;
