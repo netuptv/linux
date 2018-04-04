@@ -3494,7 +3494,7 @@ static int cxd2841er_set_frontend_tc(struct dvb_frontend *fe)
 		msleep(20);
 		timeout -= 20;
 	}
-	if (timeout < 0)
+	if (timeout <= 0)
 		dev_dbg(&priv->i2c->dev,
 			"%s(): LOCK wait timeout\n", __func__);
 done:
