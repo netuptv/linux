@@ -6,6 +6,7 @@ SRC_DIR=$(cd $(dirname ${0})/../..; pwd)
 BUILD_DIR=/mnt/build
 CCACHE_DIR=/mnt/ccache
 OUT_DIR=/mnt/out/
+PERF_BUILD_DIR=${BUILD_DIR}/tools/perf
 
 export PATH=/usr/lib/ccache/:${PATH}
 export CCACHE_DIR
@@ -20,9 +21,9 @@ TAR_FILE=${BUILD_DIR}/linux-${RELEASE}-x86.tar
 
 mv ${TAR_FILE} ${OUT_DIR}/linux-3.14.tar
 
-PERF_BUILD_DIR=${BUILD_DIR}/tools/perf/
-TRACEEVENT_DIR=mnt/src/tools/lib/traceevent/
-mkdir -p ${PERF_BUILD_DIR}/${TRACEEVENT_DIR}
-ln -sf ${TRACEEVENT_DIR}/libtraceevent.a ${PERF_BUILD_DIR}/
-make tools/perf O=${BUILD_DIR}
-cp ${BUILD_DIR}/tools/perf/perf ${OUT_DIR}/
+mkdir -p ${PERF_BUILD_DIR}
+(
+    cd tools/perf
+    make LDFLAGS=-static O=${PERF_BUILD_DIR}
+)
+cp ${PERF_BUILD_DIR}/perf ${OUT_DIR}/
