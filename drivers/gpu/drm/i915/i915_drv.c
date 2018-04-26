@@ -34,6 +34,7 @@
 #include "i915_drv.h"
 #include "i915_trace.h"
 #include "intel_drv.h"
+#include "i915_scheduler.h"
 
 #include <linux/console.h>
 #include <linux/module.h>
@@ -434,6 +435,7 @@ static const struct intel_device_info intel_broxton_info = {
 	INTEL_SKL_GT1_IDS(&intel_skylake_info),	\
 	INTEL_SKL_GT2_IDS(&intel_skylake_info),	\
 	INTEL_SKL_GT3_IDS(&intel_skylake_gt3_info),	\
+	INTEL_SKL_GT4_IDS(&intel_skylake_gt3_info), \
 	INTEL_BXT_IDS(&intel_broxton_info)
 
 static const struct pci_device_id pciidlist[] = {		/* aka */
@@ -550,6 +552,14 @@ void intel_detect_pch(struct drm_device *dev)
 
 bool i915_semaphore_is_enabled(struct drm_device *dev)
 {
+	/* Hardware semaphores are not compatible with the scheduler due to the
+	 * seqno values being potentially out of order. However, semaphores are
+	 * also not required as the scheduler will handle interring dependencies
+	 * and try do so in a way that does not cause dead time on the hardware.
+	 */
+	if (i915_scheduler_is_enabled(dev))
+		return false;
+
 	if (INTEL_INFO(dev)->gen < 6)
 		return false;
 

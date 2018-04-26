@@ -41,7 +41,7 @@
  * be moved to FW_FAILED.
  */
 
-#define I915_CSR_SKL "i915/skl_dmc_ver1.bin"
+#define I915_CSR_SKL "i915/skl_dmc_ver1_26.bin"
 #define I915_CSR_BXT "i915/bxt_dmc_ver1.bin"
 
 MODULE_FIRMWARE(I915_CSR_SKL);

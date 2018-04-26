@@ -89,6 +89,7 @@
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
 #include "i915_trace.h"
+#include "intel_lrc.h"
 
 /* This is a HW constraint. The value below is the largest known requirement
  * I've seen in a spec to date, and that was a workaround for a non-shipping
@@ -148,6 +149,22 @@ static void i915_gem_context_clean(struct intel_context *ctx)
 	}
 }
 
+static inline void i915_gem_context_boost_inc(struct intel_context *ctx)
+{
+	struct intel_gen6_power_mgmt *rps = &ctx->i915->rps;
+	atomic_inc(&rps->boost_ctx_count);
+}
+
+static inline void i915_gem_context_boost_dec(struct intel_context *ctx)
+{
+	struct intel_gen6_power_mgmt *rps = &ctx->i915->rps;
+	WARN_ON(!atomic_read(&rps->boost_ctx_count));
+	if (atomic_dec_and_test(&rps->boost_ctx_count))
+		if (del_timer(&rps->boost_timeout))
+			atomic_set(&rps->use_boost_freq, 0);
+
+}
+
 void i915_gem_context_free(struct kref *ctx_ref)
 {
 	struct intel_context *ctx = container_of(ctx_ref, typeof(*ctx), ref);
@@ -158,16 +175,23 @@ void i915_gem_context_free(struct kref *ctx_ref)
 		intel_lr_context_free(ctx);
 
 	/*
-	 * This context is going away and we need to remove all VMAs still
-	 * around. This is to handle imported shared objects for which
-	 * destructor did not run when their handles were closed.
+	 * All the contexts sharing the ppgtt are going away and
+	 * we need to remove all VMAs still around. This is to handle
+	 * imported shared objects for which destructor did not run
+	 * when their handles were closed.
 	 */
-	i915_gem_context_clean(ctx);
-
+	if (ctx->ppgtt && (--ctx->ppgtt->share_cnt == 0))
+		i915_gem_context_clean(ctx);
 	i915_ppgtt_put(ctx->ppgtt);
 
 	if (ctx->legacy_hw_ctx.rcs_state)
 		drm_gem_object_unreference(&ctx->legacy_hw_ctx.rcs_state->base);
+
+	put_pid(ctx->pid);
+	i915_perfmon_ctx_cleanup(ctx);
+	if (ctx->flags & CONTEXT_BOOST_FREQ)
+		i915_gem_context_boost_dec(ctx);
+
 	list_del(&ctx->link);
 	kfree(ctx);
 }
@@ -209,6 +233,7 @@ __create_hw_context(struct drm_device *dev,
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_context *ctx;
 	int ret;
+	int i;
 
 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (ctx == NULL)
@@ -217,6 +242,9 @@ __create_hw_context(struct drm_device *dev,
 	kref_init(&ctx->ref);
 	list_add_tail(&ctx->link, &dev_priv->context_list);
 	ctx->i915 = dev_priv;
+
+	for (i = 0; i < CONTEXT_HLIST_LEN; i++)
+		INIT_HLIST_HEAD(&ctx->req_head[i]);
 
 	if (dev_priv->hw_context_size) {
 		struct drm_i915_gem_object *obj =
@@ -246,6 +274,8 @@ __create_hw_context(struct drm_device *dev,
 
 	ctx->hang_stats.ban_period_seconds = DRM_I915_CTX_BAN_PERIOD;
 
+	ctx->sseu = dev_priv->ruling_sseu;
+
 	return ctx;
 
 err_out:
@@ -260,17 +290,32 @@ err_out:
  */
 static struct intel_context *
 i915_gem_create_context(struct drm_device *dev,
-			struct drm_i915_file_private *file_priv)
+			struct drm_i915_file_private *file_priv,
+			struct i915_hw_ppgtt *ppgtt)
 {
 	const bool is_global_default_ctx = file_priv == NULL;
 	struct intel_context *ctx;
-	int ret = 0;
+	int i, ret = 0;
 
 	BUG_ON(!mutex_is_locked(&dev->struct_mutex));
 
 	ctx = __create_hw_context(dev, file_priv);
 	if (IS_ERR(ctx))
 		return ctx;
+
+	if (!i915.enable_execlists) {
+		struct intel_engine_cs *ring;
+
+		/* Create a per context timeline for fences */
+		for_each_ring(ring, to_i915(dev), i) {
+			ret = i915_create_fence_timeline(dev, ctx, ring);
+			if (ret) {
+				DRM_ERROR("Fence timeline creation failed for legacy %s: %p\n",
+					  ring->name, ctx);
+				goto err_destroy;
+			}
+		}
+	}
 
 	if (is_global_default_ctx && ctx->legacy_hw_ctx.rcs_state) {
 		/* We may need to do things with the shrinker which
@@ -289,13 +334,17 @@ i915_gem_create_context(struct drm_device *dev,
 	}
 
 	if (USES_FULL_PPGTT(dev)) {
-		struct i915_hw_ppgtt *ppgtt = i915_ppgtt_create(dev, file_priv);
+		if (ppgtt) {
+			i915_ppgtt_get(ppgtt);
+		} else {
+			ppgtt = i915_ppgtt_create(dev, file_priv);
 
-		if (IS_ERR_OR_NULL(ppgtt)) {
-			DRM_DEBUG_DRIVER("PPGTT setup failed (%ld)\n",
-					 PTR_ERR(ppgtt));
-			ret = PTR_ERR(ppgtt);
-			goto err_unpin;
+			if (IS_ERR_OR_NULL(ppgtt)) {
+				DRM_DEBUG_DRIVER("PPGTT setup failed (%ld)\n",
+						 PTR_ERR(ppgtt));
+				ret = PTR_ERR(ppgtt);
+				goto err_unpin;
+			}
 		}
 
 		ctx->ppgtt = ppgtt;
@@ -303,13 +352,17 @@ i915_gem_create_context(struct drm_device *dev,
 
 	trace_i915_context_create(ctx);
 
+	ctx->pid = get_pid(task_tgid(current));
+	i915_perfmon_ctx_setup(ctx);
+
 	return ctx;
 
 err_unpin:
 	if (is_global_default_ctx && ctx->legacy_hw_ctx.rcs_state)
 		i915_gem_object_ggtt_unpin(ctx->legacy_hw_ctx.rcs_state);
 err_destroy:
-	idr_remove(&file_priv->context_idr, ctx->user_handle);
+	if (file_priv)
+		idr_remove(&file_priv->context_idr, ctx->user_handle);
 	i915_gem_context_unreference(ctx);
 	return ERR_PTR(ret);
 }
@@ -378,7 +431,7 @@ int i915_gem_context_init(struct drm_device *dev)
 		}
 	}
 
-	ctx = i915_gem_create_context(dev, NULL);
+	ctx = i915_gem_create_context(dev, NULL, NULL);
 	if (IS_ERR(ctx)) {
 		DRM_ERROR("Failed to create default global context (error %ld)\n",
 			  PTR_ERR(ctx));
@@ -478,7 +531,7 @@ int i915_gem_context_open(struct drm_device *dev, struct drm_file *file)
 	idr_init(&file_priv->context_idr);
 
 	mutex_lock(&dev->struct_mutex);
-	ctx = i915_gem_create_context(dev, file_priv);
+	ctx = i915_gem_create_context(dev, file_priv, NULL);
 	mutex_unlock(&dev->struct_mutex);
 
 	if (IS_ERR(ctx)) {
@@ -850,8 +903,27 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 				  struct drm_file *file)
 {
 	struct drm_i915_gem_context_create *args = data;
+	struct drm_i915_gem_context_create2 args2;
+	int ret;
+
+	if (!contexts_enabled(dev))
+		return -ENODEV;
+
+	memset(&args2, 0, sizeof(args2));
+
+	ret = i915_gem_context_create2_ioctl(dev, &args2, file);
+	args->ctx_id = args2.ctx_id;
+
+	return ret;
+}
+
+int i915_gem_context_create2_ioctl(struct drm_device *dev, void *data,
+				   struct drm_file *file)
+{
+	struct drm_i915_gem_context_create2 *args = data;
 	struct drm_i915_file_private *file_priv = file->driver_priv;
 	struct intel_context *ctx;
+	struct i915_hw_ppgtt *ppgtt = NULL;
 	int ret;
 
 	if (!contexts_enabled(dev))
@@ -861,15 +933,35 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		return ret;
 
-	ctx = i915_gem_create_context(dev, file_priv);
-	mutex_unlock(&dev->struct_mutex);
-	if (IS_ERR(ctx))
-		return PTR_ERR(ctx);
+	if (!USES_FULL_PPGTT(dev))
+		args->flags &= ~I915_CTX_CREATE_SHARE_PPGTT;
 
+	if (args->flags & I915_CTX_CREATE_SHARE_PPGTT) {
+		struct intel_context *share_ctx;
+
+		share_ctx = i915_gem_context_get(file_priv, args->svm_ctx_id);
+		if (IS_ERR(share_ctx)) {
+			ret = PTR_ERR(share_ctx);
+			goto out_unlock;
+		}
+
+		ppgtt = share_ctx->ppgtt;
+	}
+
+	ctx = i915_gem_create_context(dev, file_priv, ppgtt);
+	if (IS_ERR(ctx)) {
+		ret = PTR_ERR(ctx);
+		goto out_unlock;
+	}
+
+	if (ppgtt)
+		ppgtt->share_cnt++;
 	args->ctx_id = ctx->user_handle;
 	DRM_DEBUG_DRIVER("HW context %d created\n", args->ctx_id);
 
-	return 0;
+out_unlock:
+	mutex_unlock(&dev->struct_mutex);
+	return ret;
 }
 
 int i915_gem_context_destroy_ioctl(struct drm_device *dev, void *data,
@@ -927,6 +1019,15 @@ int i915_gem_context_getparam_ioctl(struct drm_device *dev, void *data,
 	case I915_CONTEXT_PARAM_NO_ZEROMAP:
 		args->value = ctx->flags & CONTEXT_NO_ZEROMAP;
 		break;
+	case I915_CONTEXT_PARAM_PRIORITY:
+		args->value = (__u64) ctx->sched_info.priority;
+		break;
+	case I915_CONTEXT_PRIVATE_PARAM_BOOST:
+		args->value = ctx->flags & CONTEXT_BOOST_FREQ;
+		break;
+	case I915_CONTEXT_PARAM_SSEU:
+		args->value = intel_lr_context_get_sseu(ctx);
+		break;
 	default:
 		ret = -EINVAL;
 		break;
@@ -964,6 +1065,7 @@ int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 		else
 			ctx->hang_stats.ban_period_seconds = args->value;
 		break;
+
 	case I915_CONTEXT_PARAM_NO_ZEROMAP:
 		if (args->size) {
 			ret = -EINVAL;
@@ -972,6 +1074,57 @@ int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 			ctx->flags |= args->value ? CONTEXT_NO_ZEROMAP : 0;
 		}
 		break;
+
+	case I915_CONTEXT_PARAM_PRIORITY:
+	{
+		int32_t	priority = (int32_t) args->value;
+		struct drm_i915_private *dev_priv  = dev->dev_private;
+		struct i915_scheduler   *scheduler = dev_priv->scheduler;
+
+		if (args->size)
+			ret = -EINVAL;
+		else if ((priority > scheduler->priority_level_max) ||
+			 (priority < scheduler->priority_level_min))
+			ret = -EINVAL;
+		else if ((priority > 0) &&
+			 !capable(CAP_SYS_ADMIN))
+			ret = -EPERM;
+		else
+			ctx->sched_info.priority = priority;
+		break;
+	}
+
+	case I915_CONTEXT_PRIVATE_PARAM_BOOST:
+	{
+		int val = !!args->value;
+		if (args->size)
+			ret = -EINVAL;
+		else {
+			if (val != (ctx->flags & CONTEXT_BOOST_FREQ)) {
+				if (val) {
+					ctx->flags |= CONTEXT_BOOST_FREQ;
+					i915_gem_context_boost_inc(ctx);
+				}
+				else {
+					ctx->flags &= ~CONTEXT_NO_ZEROMAP;
+					i915_gem_context_boost_dec(ctx);
+				}
+			}
+		}
+		break;
+	}
+
+	case I915_CONTEXT_PARAM_SSEU:
+	{
+		if (args->size)
+			ret = -EINVAL;
+		else if (!i915.enable_execlists)
+			ret = -ENODEV;
+		else
+			ret = intel_lr_context_set_sseu(ctx, args->value);
+		break;
+	}
+
 	default:
 		ret = -EINVAL;
 		break;

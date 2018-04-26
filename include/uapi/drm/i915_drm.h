@@ -28,6 +28,7 @@
 #define _UAPI_I915_DRM_H_
 
 #include <drm/drm.h>
+#include <drm/i915_perfmon.h>
 
 /* Please note that modifications to all structs defined here are
  * subject to backwards-compatibility constraints.
@@ -57,6 +58,53 @@
 #define I915_L3_PARITY_UEVENT		"L3_PARITY_ERROR"
 #define I915_ERROR_UEVENT		"ERROR"
 #define I915_RESET_UEVENT		"RESET"
+
+enum drm_i915_gem_engine_class {
+	I915_ENGINE_CLASS_RENDER        = 0,
+	I915_ENGINE_CLASS_COPY          = 1,
+	I915_ENGINE_CLASS_VIDEO         = 2,
+	I915_ENGINE_CLASS_VIDEO_ENHANCE = 3,
+
+	I915_ENGINE_CLASS_INVALID	= -1
+};
+
+/**
+ * DOC: perf_events exposed by i915 through /sys/bus/event_sources/drivers/i915
+ *
+ */
+
+enum drm_i915_pmu_engine_sample {
+	I915_SAMPLE_BUSY = 0,
+	I915_SAMPLE_WAIT = 1,
+	I915_SAMPLE_SEMA = 2
+};
+
+#define I915_PMU_SAMPLE_BITS (4)
+#define I915_PMU_SAMPLE_MASK (0xf)
+#define I915_PMU_SAMPLE_INSTANCE_BITS (8)
+#define I915_PMU_CLASS_SHIFT \
+	(I915_PMU_SAMPLE_BITS + I915_PMU_SAMPLE_INSTANCE_BITS)
+
+#define __I915_PMU_ENGINE(class, instance, sample) \
+	((class) << I915_PMU_CLASS_SHIFT | \
+	(instance) << I915_PMU_SAMPLE_BITS | \
+	(sample))
+
+#define I915_PMU_ENGINE_BUSY(class, instance) \
+	__I915_PMU_ENGINE(class, instance, I915_SAMPLE_BUSY)
+
+#define I915_PMU_ENGINE_WAIT(class, instance) \
+	__I915_PMU_ENGINE(class, instance, I915_SAMPLE_WAIT)
+
+#define I915_PMU_ENGINE_SEMA(class, instance) \
+	__I915_PMU_ENGINE(class, instance, I915_SAMPLE_SEMA)
+
+#define __I915_PMU_OTHER(x) (__I915_PMU_ENGINE(0xff, 0xff, 0xf) + 1 + (x))
+
+#define I915_PMU_ACTUAL_FREQUENCY	__I915_PMU_OTHER(0)
+#define I915_PMU_REQUESTED_FREQUENCY	__I915_PMU_OTHER(1)
+
+#define I915_PMU_LAST I915_PMU_REQUESTED_FREQUENCY
 
 /* Each region is a minimum of 16k, and there are at most 255 of them.
  */
@@ -230,6 +278,9 @@ typedef struct _drm_i915_sarea {
 #define DRM_I915_GEM_USERPTR		0x33
 #define DRM_I915_GEM_CONTEXT_GETPARAM	0x34
 #define DRM_I915_GEM_CONTEXT_SETPARAM	0x35
+#define DRM_I915_GEM_CONTEXT_CREATE2	0x36
+#define DRM_I915_PERFMON		0x3e
+#define DRM_I915_LOAD_BALANCING_HINT	0x3f
 
 #define DRM_IOCTL_I915_INIT		DRM_IOW( DRM_COMMAND_BASE + DRM_I915_INIT, drm_i915_init_t)
 #define DRM_IOCTL_I915_FLUSH		DRM_IO ( DRM_COMMAND_BASE + DRM_I915_FLUSH)
@@ -250,7 +301,7 @@ typedef struct _drm_i915_sarea {
 #define DRM_IOCTL_I915_HWS_ADDR		DRM_IOW(DRM_COMMAND_BASE + DRM_I915_HWS_ADDR, struct drm_i915_gem_init)
 #define DRM_IOCTL_I915_GEM_INIT		DRM_IOW(DRM_COMMAND_BASE + DRM_I915_GEM_INIT, struct drm_i915_gem_init)
 #define DRM_IOCTL_I915_GEM_EXECBUFFER	DRM_IOW(DRM_COMMAND_BASE + DRM_I915_GEM_EXECBUFFER, struct drm_i915_gem_execbuffer)
-#define DRM_IOCTL_I915_GEM_EXECBUFFER2	DRM_IOW(DRM_COMMAND_BASE + DRM_I915_GEM_EXECBUFFER2, struct drm_i915_gem_execbuffer2)
+#define DRM_IOCTL_I915_GEM_EXECBUFFER2	DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_EXECBUFFER2, struct drm_i915_gem_execbuffer2)
 #define DRM_IOCTL_I915_GEM_PIN		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_PIN, struct drm_i915_gem_pin)
 #define DRM_IOCTL_I915_GEM_UNPIN	DRM_IOW(DRM_COMMAND_BASE + DRM_I915_GEM_UNPIN, struct drm_i915_gem_unpin)
 #define DRM_IOCTL_I915_GEM_BUSY		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_BUSY, struct drm_i915_gem_busy)
@@ -277,12 +328,16 @@ typedef struct _drm_i915_sarea {
 #define DRM_IOCTL_I915_GET_SPRITE_COLORKEY DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GET_SPRITE_COLORKEY, struct drm_intel_sprite_colorkey)
 #define DRM_IOCTL_I915_GEM_WAIT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_WAIT, struct drm_i915_gem_wait)
 #define DRM_IOCTL_I915_GEM_CONTEXT_CREATE	DRM_IOWR (DRM_COMMAND_BASE + DRM_I915_GEM_CONTEXT_CREATE, struct drm_i915_gem_context_create)
+#define DRM_IOCTL_I915_GEM_CONTEXT_CREATE2	DRM_IOWR (DRM_COMMAND_BASE + DRM_I915_GEM_CONTEXT_CREATE2, struct drm_i915_gem_context_create2)
 #define DRM_IOCTL_I915_GEM_CONTEXT_DESTROY	DRM_IOW (DRM_COMMAND_BASE + DRM_I915_GEM_CONTEXT_DESTROY, struct drm_i915_gem_context_destroy)
 #define DRM_IOCTL_I915_REG_READ			DRM_IOWR (DRM_COMMAND_BASE + DRM_I915_REG_READ, struct drm_i915_reg_read)
 #define DRM_IOCTL_I915_GET_RESET_STATS		DRM_IOWR (DRM_COMMAND_BASE + DRM_I915_GET_RESET_STATS, struct drm_i915_reset_stats)
 #define DRM_IOCTL_I915_GEM_USERPTR			DRM_IOWR (DRM_COMMAND_BASE + DRM_I915_GEM_USERPTR, struct drm_i915_gem_userptr)
 #define DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM	DRM_IOWR (DRM_COMMAND_BASE + DRM_I915_GEM_CONTEXT_GETPARAM, struct drm_i915_gem_context_param)
 #define DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM	DRM_IOWR (DRM_COMMAND_BASE + DRM_I915_GEM_CONTEXT_SETPARAM, struct drm_i915_gem_context_param)
+
+#define DRM_IOCTL_I915_PERFMON		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_PERFMON, struct drm_i915_perfmon)
+#define DRM_IOCTL_I915_LOAD_BALANCING_HINT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_LOAD_BALANCING_HINT, struct drm_i915_ring_load_query)
 
 /* Allow drivers to submit batchbuffers directly to hardware, relying
  * on the security mechanisms provided by hardware.
@@ -356,6 +411,10 @@ typedef struct drm_i915_irq_wait {
 #define I915_PARAM_EU_TOTAL		 34
 #define I915_PARAM_HAS_GPU_RESET	 35
 #define I915_PARAM_HAS_RESOURCE_STREAMER 36
+#define I915_PARAM_HAS_EXEC_SOFTPIN	 37
+
+#define I915_PRIVATE_PARAM_SCHEDULER_SUPPORT_USER_CTX  (-2)
+#define I915_PRIVATE_PARAM_HAS_EXEC_FORCE_NON_COHERENT (-1)
 
 typedef struct drm_i915_getparam {
 	__s32 param;
@@ -682,8 +741,12 @@ struct drm_i915_gem_exec_object2 {
 	__u64 alignment;
 
 	/**
-	 * Returned value of the updated offset of the object, for future
-	 * presumed_offset writes.
+	 * When the EXEC_OBJECT_PINNED flag is specified this is populated by
+	 * the user with the GTT offset at which this object will be pinned.
+	 * When the I915_EXEC_NO_RELOC flag is specified this must contain the
+	 * presumed_offset of the object.
+	 * During execbuffer2 the kernel populates it with the value of the
+	 * current GTT offset of the object, for future presumed_offset writes.
 	 */
 	__u64 offset;
 
@@ -691,11 +754,12 @@ struct drm_i915_gem_exec_object2 {
 #define EXEC_OBJECT_NEEDS_GTT	(1<<1)
 #define EXEC_OBJECT_WRITE	(1<<2)
 #define EXEC_OBJECT_SUPPORTS_48B_ADDRESS (1<<3)
-#define __EXEC_OBJECT_UNKNOWN_FLAGS -(EXEC_OBJECT_SUPPORTS_48B_ADDRESS<<1)
+#define EXEC_OBJECT_PINNED	(1<<4)
+#define __EXEC_OBJECT_UNKNOWN_FLAGS -(EXEC_OBJECT_PINNED<<1)
 	__u64 flags;
 
 	__u64 rsvd1;
-	__u64 rsvd2;
+	__u64 rsvd2;	/* Used for fence fd */
 };
 
 struct drm_i915_gem_execbuffer2 {
@@ -776,7 +840,23 @@ struct drm_i915_gem_execbuffer2 {
  */
 #define I915_EXEC_RESOURCE_STREAMER     (1<<15)
 
-#define __I915_EXEC_UNKNOWN_FLAGS -(I915_EXEC_RESOURCE_STREAMER<<1)
+/** Caller supplies a sync fence fd in the rsvd2 field.
+ * Wait for it to be signalled before starting the work
+ */
+#define I915_EXEC_WAIT_FENCE		(1<<16)
+
+/** Caller wants a sync fence fd for this execbuffer.
+ *  It will be returned in rsvd2
+ */
+#define I915_EXEC_CREATE_FENCE		(1<<17)
+
+#define __I915_EXEC_UNKNOWN_FLAGS (-(I915_EXEC_CREATE_FENCE<<1) & \
+				   ~I915_PRIVATE_EXEC_FORCE_NON_COHERENT)
+
+/**
+ * Tell the kernel that the batch buffer requires to disable IA-Coherency
+ */
+#define I915_PRIVATE_EXEC_FORCE_NON_COHERENT    (1<<31)
 
 #define I915_EXEC_CONTEXT_ID_MASK	(0xffffffff)
 #define i915_execbuffer2_set_context_id(eb2, context) \
@@ -1073,6 +1153,15 @@ struct drm_i915_gem_context_create {
 	__u32 pad;
 };
 
+#define I915_CTX_CREATE_SHARE_PPGTT (1 << 0)
+struct drm_i915_gem_context_create2 {
+	__u32 ctx_id;
+	__u32 flags;
+	/* input: id of context to share PPGTT, 0 for default context */
+	__u32 svm_ctx_id;
+	__u32 pad;
+};
+
 struct drm_i915_gem_context_destroy {
 	__u32 ctx_id;
 	__u32 pad;
@@ -1127,7 +1216,35 @@ struct drm_i915_gem_context_param {
 	__u64 param;
 #define I915_CONTEXT_PARAM_BAN_PERIOD 0x1
 #define I915_CONTEXT_PARAM_NO_ZEROMAP 0x2
+#define I915_CONTEXT_PARAM_PRIORITY	0x4
+#define I915_CONTEXT_PRIVATE_PARAM_BOOST 0x80000000
+#define I915_CONTEXT_PARAM_SSEU		0x7
 	__u64 value;
 };
+
+union drm_i915_gem_context_param_sseu {
+	struct {
+		u8 slice_mask;
+		u8 subslice_mask;
+		u8 min_eu_per_subslice;
+		u8 max_eu_per_subslice;
+	} packed;
+	__u64 value;
+};
+
+typedef struct drm_i915_ring_load_info
+{
+	/** ID of ring & load counter*/
+	int ring_id;
+	int load_cnt;
+} drm_i915_ring_load_info;
+
+typedef struct drm_i915_ring_load_query
+{
+	/** Number of rings, load counters of which we want to query & ptr to array
+	  * of load info structures */
+	int query_size;
+	drm_i915_ring_load_info __user *load_info;
+} drm_i915_ring_load_query;
 
 #endif /* _UAPI_I915_DRM_H_ */
