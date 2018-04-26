@@ -889,7 +889,7 @@ static void i915_record_ring_state(struct drm_device *dev,
 		ering->instdone = I915_READ(GEN2_INSTDONE);
 	}
 
-	ering->waiting = waitqueue_active(&ring->irq_queue);
+	ering->waiting = !list_empty(&ring->request_wait_list);
 	ering->instpm = I915_READ(RING_INSTPM(ring->mmio_base));
 	ering->seqno = ring->get_seqno(ring, false);
 	ering->acthd = intel_ring_get_active_head(ring);

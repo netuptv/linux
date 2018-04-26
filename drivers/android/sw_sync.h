@@ -19,8 +19,8 @@
 
 #include <linux/types.h>
 #include <linux/kconfig.h>
+#include <uapi/sync/sw_sync.h>
 #include "sync.h"
-#include "uapi/sw_sync.h"
 
 struct sw_sync_timeline {
 	struct	sync_timeline	obj;

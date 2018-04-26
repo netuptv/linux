@@ -8,6 +8,7 @@
 i915-y := i915_drv.o \
 	  i915_irq.o \
 	  i915_params.o \
+	  i915_scheduler.o \
           i915_suspend.o \
 	  i915_sysfs.o \
 	  intel_csr.o \
@@ -16,6 +17,7 @@ i915-y := i915_drv.o \
 
 i915-$(CONFIG_COMPAT)   += i915_ioc32.o
 i915-$(CONFIG_DEBUG_FS) += i915_debugfs.o
+i915-$(CONFIG_PERF_EVENTS) += i915_pmu.o
 
 # GEM code
 i915-y += i915_cmd_parser.o \
@@ -37,6 +39,7 @@ i915-y += i915_cmd_parser.o \
 	  i915_trace_points.o \
 	  intel_lrc.o \
 	  intel_mocs.o \
+	  intel_mocs_gmm_table.o \
 	  intel_ringbuffer.o \
 	  intel_uncore.o
 
@@ -90,11 +93,17 @@ i915-y += dvo_ch7017.o \
 	  intel_sdvo.o \
 	  intel_tv.o
 
+# performance monitoring
+i915-y += i915_perfmon.o
+
 # virtual gpu code
 i915-y += i915_vgpu.o
 
 # legacy horrors
 i915-y += i915_dma.o
+
+# mvp
+i915-y += i915_mvp.o
 
 obj-$(CONFIG_DRM_I915)  += i915.o
 

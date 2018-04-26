@@ -1,0 +1,3 @@
+# sync Header export list
+header-y += sw_sync.h
+header-y += sync.h

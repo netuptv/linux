@@ -21,7 +21,7 @@
 #include <linux/wait.h>
 #include <linux/fence.h>
 
-#include "uapi/sync.h"
+#include <uapi/sync/sync.h>
 
 struct sync_timeline;
 struct sync_pt;
@@ -254,6 +254,16 @@ void sync_pt_free(struct sync_pt *pt);
  */
 struct sync_fence *sync_fence_create(const char *name, struct sync_pt *pt);
 
+/**
+ * sync_fence_create_dma() - creates a sync fence from dma-fence
+ * @name:	name of fence to create
+ * @pt:	dma-fence to add to the fence
+ *
+ * Creates a fence containg @pt.  Once this is called, the fence takes
+ * ownership of @pt.
+ */
+struct sync_fence *sync_fence_create_dma(const char *name, struct fence *pt);
+
 /*
  * API for sync_fence consumers
  */
@@ -335,20 +345,42 @@ int sync_fence_cancel_async(struct sync_fence *fence,
  */
 int sync_fence_wait(struct sync_fence *fence, long timeout);
 
+/**
+ * sync_fence_is_signaled() - Return an indication if the fence is signaled
+ * @fence:	fence to check
+ *
+ * returns 1 if fence is signaled
+ * returns 0 if fence is not signaled
+ * returns < 0 if fence is in error state
+ */
+static inline int
+sync_fence_is_signaled(struct sync_fence *fence)
+{
+	int status;
+
+	status = atomic_read(&fence->status);
+	if (status == 0)
+		return 1;
+	if (status > 0)
+		return 0;
+	return status;
+}
+
 #ifdef CONFIG_DEBUG_FS
 
 void sync_timeline_debug_add(struct sync_timeline *obj);
 void sync_timeline_debug_remove(struct sync_timeline *obj);
 void sync_fence_debug_add(struct sync_fence *fence);
 void sync_fence_debug_remove(struct sync_fence *fence);
-void sync_dump(void);
+void sync_dump(struct sync_fence *fence);
+void sync_dump_timeline(struct sync_timeline *timeline);
 
 #else
 # define sync_timeline_debug_add(obj)
 # define sync_timeline_debug_remove(obj)
 # define sync_fence_debug_add(fence)
 # define sync_fence_debug_remove(fence)
-# define sync_dump()
+# define sync_dump(fence)
 #endif
 int sync_fence_wake_up_wq(wait_queue_t *curr, unsigned mode,
 				 int wake_flags, void *key);

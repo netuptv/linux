@@ -101,11 +101,18 @@ fw_domain_get(const struct intel_uncore_forcewake_domain *d)
 static inline void
 fw_domain_wait_ack(const struct intel_uncore_forcewake_domain *d)
 {
+	int count = 0;
+retry:
 	if (wait_for_atomic((__raw_i915_read32(d->i915, d->reg_ack) &
 			     FORCEWAKE_KERNEL),
-			    FORCEWAKE_ACK_TIMEOUT_MS))
-		DRM_ERROR("%s: timed out waiting for forcewake ack request.\n",
-			  intel_uncore_forcewake_domain_to_str(d->id));
+			     FORCEWAKE_ACK_TIMEOUT_MS)) {
+		if (++count >= 5) {
+			DRM_ERROR("%s: timed out waiting for forcewake ack request.\n",
+				  intel_uncore_forcewake_domain_to_str(d->id));
+		} else {
+			goto retry;
+		}
+	}
 }
 
 static inline void
@@ -182,7 +189,7 @@ static void __gen6_gt_wait_for_thread_c0(struct drm_i915_private *dev_priv)
 	 */
 	if (wait_for_atomic_us((__raw_i915_read32(dev_priv, GEN6_GT_THREAD_STATUS_REG) &
 				GEN6_GT_THREAD_STATUS_CORE_MASK) == 0, 500))
-		DRM_ERROR("GT thread status wait timed out\n");
+		DRM_DEBUG_DRIVER("GT thread status wait timed out\n");
 }
 
 static void fw_domains_get_with_thread_status(struct drm_i915_private *dev_priv,
@@ -1273,6 +1280,7 @@ static const struct register_whitelist {
 	uint32_t gen_bitmask;
 } whitelist[] = {
 	{ RING_TIMESTAMP(RENDER_RING_BASE), 8, GEN_RANGE(4, 9) },
+	{ HSW_EDRAM_PRESENT, 4, GEN_RANGE(7, 9) },
 };
 
 int i915_reg_read_ioctl(struct drm_device *dev,
@@ -1356,10 +1364,7 @@ int i915_get_reset_stats_ioctl(struct drm_device *dev,
 	}
 	hs = &ctx->hang_stats;
 
-	if (capable(CAP_SYS_ADMIN))
-		args->reset_count = i915_reset_count(&dev_priv->gpu_error);
-	else
-		args->reset_count = 0;
+	args->reset_count = i915_reset_count(&dev_priv->gpu_error);
 
 	args->batch_active = hs->batch_active;
 	args->batch_pending = hs->batch_pending;
