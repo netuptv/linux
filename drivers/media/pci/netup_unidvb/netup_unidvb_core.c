@@ -237,9 +237,11 @@ static irqreturn_t netup_dma_interrupt(struct netup_dma *dma)
 		(u32)(addr_curr - dma->addr_last) :
 		(u32)(dma->ring_buffer_size - (dma->addr_last - addr_curr));
 	if (dma->data_size != 0) {
-		printk_ratelimited("%s(): lost interrupt, data size %d\n",
-			__func__, dma->data_size);
 		dma->data_size += size;
+	}
+	if (dma->data_size > dma->ring_buffer_size) {
+		printk_ratelimited("%s(): ring buffer overflowed by %d bytes\n",
+			__func__, dma->data_size - dma->ring_buffer_size);
 	}
 	if (dma->data_size == 0 || dma->data_size > dma->ring_buffer_size) {
 		dma->data_size = size;
