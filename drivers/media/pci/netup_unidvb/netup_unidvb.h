@@ -129,6 +129,7 @@ struct netup_unidvb_dev {
 	struct netup_ci_state		ci[2];
 	struct netup_spi		*spi;
 	enum netup_hw_rev		rev;
+	char				name[2][16];
 };
 
 int netup_i2c_register(struct netup_unidvb_dev *ndev);
