@@ -391,7 +391,6 @@ static int netup_unidvb_dvb_init(struct netup_unidvb_dev *ndev,
 	int fe_count = 0;
 	int i = 0;
 	struct vb2_dvb_frontend *fes[4];
-	u8 fe_name[32];
 
 	if (ndev->rev == NETUP_HW_REV_1_3) {
 		fe_count = 3;
@@ -431,8 +430,7 @@ static int netup_unidvb_dvb_init(struct netup_unidvb_dev *ndev,
 
 	for (i = 0; i < fe_count; i++) {
 		netup_unidvb_queue_init(&ndev->dma[num], &fes[i]->dvb.dvbq);
-		snprintf(fe_name, sizeof(fe_name), "netup_fe%d", i);
-		fes[i]->dvb.name = fe_name;
+		fes[i]->dvb.name = ndev->name[num];
 	}
 
 	fes[0]->dvb.frontend = dvb_attach(cxd2841er_attach_s,
@@ -557,6 +555,8 @@ static int netup_unidvb_dvb_init(struct netup_unidvb_dev *ndev,
 			__func__, num);
 		goto frontend_detach;
 	}
+	snprintf(ndev->name[num], sizeof(ndev->name[num]), "unidvb%d", 
+			ndev->frontends[num].adapter.num);
 	dev_info(&ndev->pci_dev->dev, "DVB init done, num=%d\n", num);
 	return 0;
 frontend_detach:
