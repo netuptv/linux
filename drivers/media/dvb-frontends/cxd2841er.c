@@ -3107,7 +3107,7 @@ static int cxd2841er_tune_tc(struct dvb_frontend *fe,
 			     unsigned int *delay,
 			     enum fe_status *status)
 {
-	int ret, carrier_offset;
+	int ret = 0, carrier_offset;
 	struct cxd2841er_priv *priv = fe->demodulator_priv;
 	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 
@@ -3116,41 +3116,45 @@ static int cxd2841er_tune_tc(struct dvb_frontend *fe,
 		ret = cxd2841er_set_frontend_tc(fe);
 		if (ret)
 			return ret;
-		cxd2841er_read_status_tc(fe, status);
-		if (*status & FE_HAS_LOCK) {
-			switch (priv->system) {
-			case SYS_DVBT:
-				ret = cxd2841er_get_carrier_offset_t(
-					priv, p->bandwidth_hz,
-					&carrier_offset);
-				break;
-			case SYS_DVBT2:
-				ret = cxd2841er_get_carrier_offset_t2(
-					priv, p->bandwidth_hz,
-					&carrier_offset);
-				break;
-			case SYS_DVBC_ANNEX_A:
-				ret = cxd2841er_get_carrier_offset_c(
-					priv, &carrier_offset);
-				break;
-			default:
-				dev_dbg(&priv->i2c->dev,
-					"%s(): invalid delivery system %d\n",
-					__func__, priv->system);
-				return -EINVAL;
+		if (!(mode_flags & FE_TUNE_MODE_ONESHOT)) {
+			cxd2841er_read_status_tc(fe, status);
+			if (*status & FE_HAS_LOCK) {
+				switch (priv->system) {
+				case SYS_DVBT:
+					ret = cxd2841er_get_carrier_offset_t(
+						priv, p->bandwidth_hz,
+						&carrier_offset);
+					break;
+				case SYS_DVBT2:
+					ret = cxd2841er_get_carrier_offset_t2(
+						priv, p->bandwidth_hz,
+						&carrier_offset);
+					break;
+				case SYS_DVBC_ANNEX_A:
+					ret = cxd2841er_get_carrier_offset_c(
+						priv, &carrier_offset);
+					break;
+				default:
+					dev_dbg(&priv->i2c->dev,
+						"%s(): invalid delivery system %d\n",
+						__func__, priv->system);
+					return -EINVAL;
+				}
+				if (ret)
+					return ret;
+				dev_dbg(&priv->i2c->dev, "%s(): carrier offset %d\n",
+					__func__, carrier_offset);
+				p->frequency += carrier_offset;
+				ret = cxd2841er_set_frontend_tc(fe);
+				if (ret)
+					return ret;
 			}
-			if (ret)
-				return ret;
-			dev_dbg(&priv->i2c->dev, "%s(): carrier offset %d\n",
-				__func__, carrier_offset);
-			p->frequency += carrier_offset;
-			ret = cxd2841er_set_frontend_tc(fe);
-			if (ret)
-				return ret;
 		}
 	}
 	*delay = HZ / 5;
-	return cxd2841er_read_status_tc(fe, status);
+	if (!(mode_flags & FE_TUNE_MODE_ONESHOT))
+		ret = cxd2841er_read_status_tc(fe, status);
+	return ret;
 }
 
 static int cxd2841er_sleep_s(struct dvb_frontend *fe)
