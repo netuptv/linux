@@ -41,6 +41,11 @@
 #define NETUP_UNIDVB_IRQ_CAM0	(1 << 11)
 #define NETUP_UNIDVB_IRQ_CAM1	(1 << 12)
 
+/* PID filter */
+#define NETUP_PF0_ADDR         0x5400
+#define NETUP_PF1_ADDR         0x5c00
+#define NETUP_PF_SIZE          1024
+
 /* NetUP Universal DVB card hardware revisions and it's PCI device id's:
  * 1.3 - CXD2841ER demod, ASCOT2E and HORUS3A tuners
  * 1.4 - CXD2854ER demod, HELENE tuner
@@ -97,6 +102,15 @@ struct netup_ci_state {
 	int nr;
 };
 
+struct netup_pid_filter {
+	u8 __iomem              *pid_map;
+	int                     (*start_feed)(struct dvb_demux_feed *feed);
+	int                     (*stop_feed)(struct dvb_demux_feed *feed);
+	void                    *priv;
+	struct netup_unidvb_dev *dev;
+	int                     nr;
+};
+
 struct netup_spi;
 
 struct netup_unidvb_dev {
@@ -118,6 +132,8 @@ struct netup_unidvb_dev {
 	struct workqueue_struct		*wq;
 	struct netup_dma		dma[2];
 	struct netup_ci_state		ci[2];
+	/* PID filtering */
+	struct netup_pid_filter		pf[2];
 	struct netup_spi		*spi;
 	enum netup_hw_rev		rev;
 	char				name[2][16];
