@@ -29,6 +29,7 @@
 #include "lnbh25.h"
 
 static void netup_unidvb_pf_init(struct netup_unidvb_dev *ndev, int nr);
+static void netup_unidvb_pf_fini(struct netup_unidvb_dev *ndev, int nr);
 static int spi_enable;
 module_param(spi_enable, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
@@ -521,6 +522,7 @@ static void netup_unidvb_dvb_fini(struct netup_unidvb_dev *ndev, int num)
 			__func__, num);
 		return;
 	}
+	netup_unidvb_pf_fini(ndev, num);
 	vb2_dvb_unregister_bus(&ndev->frontends[num]);
 	dev_info(&ndev->pci_dev->dev,
 		"%s(): DVB bus %d unregistered\n", __func__, num);
@@ -843,6 +845,37 @@ static void netup_unidvb_pf_init(struct netup_unidvb_dev *ndev, int nr)
 		netup_unidvb_pf_clear(pf, NETUP_PF_DROP_PID);
 		dev_info(&ndev->pci_dev->dev, "%s(): enabled for #%d.%d\n",
 						 __func__, nr, i);
+	}
+}
+
+static void netup_unidvb_pf_fini(struct netup_unidvb_dev *ndev, int nr)
+{
+	struct vb2_dvb_frontend *fe;
+	struct netup_pid_filter *pf;
+	int fe_count;
+	int i;
+
+	if (nr < 0 || nr > 1)
+	{
+		dev_err(&ndev->pci_dev->dev, "%s(): invalid filter #%d\n",
+						__func__, nr);
+		return;
+	}
+
+	fe_count = ndev->rev == NETUP_HW_REV_1_3 ? 3 : 4;
+	for (i = 0; i < fe_count; i++)
+	{
+		pf = &ndev->pf[nr][i];
+		pf->pid_map = ndev->bmmio0 + (nr == 0 ? NETUP_PF0_ADDR : NETUP_PF1_ADDR);
+
+		fe = vb2_dvb_get_frontend(&ndev->frontends[nr], i + 1);
+		if (!fe)
+		{
+			dev_info(&ndev->pci_dev->dev, "%s(): failed for #%d.%d\n",
+							 __func__, nr, i);
+			continue;
+		}
+		netup_unidvb_pf_clear(pf, NETUP_PF_PASS_PID);
 	}
 }
 
