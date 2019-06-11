@@ -19,7 +19,7 @@ make -j $(nproc) O=${BUILD_DIR} tar-pkg
 RELEASE=$(cat ${BUILD_DIR}/include/config/kernel.release)
 TAR_FILE=${BUILD_DIR}/linux-${RELEASE}-x86.tar
 
-mv ${TAR_FILE} ${OUT_DIR}/linux-4.4.tar
+mv ${TAR_FILE} ${OUT_DIR}/linux-4.19.tar
 
 mkdir -p ${PERF_BUILD_DIR}
 (
