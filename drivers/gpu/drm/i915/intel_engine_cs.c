@@ -1414,26 +1414,33 @@ static void intel_engine_print_registers(const struct intel_engine_cs *engine,
 static void print_request_ring(struct drm_printer *m, struct i915_request *rq)
 {
 	void *ring;
+	const void *vaddr = READ_ONCE(rq->ring->vaddr);
+	unsigned int ring_size = READ_ONCE(rq->ring->size);
+	unsigned int head = READ_ONCE(rq->head);
+	unsigned int tail = READ_ONCE(rq->tail);
 	int size;
 
 	drm_printf(m,
 		   "[head %04x, postfix %04x, tail %04x, batch 0x%08x_%08x]:\n",
-		   rq->head, rq->postfix, rq->tail,
+		   head, rq->postfix, tail,
 		   rq->batch ? upper_32_bits(rq->batch->node.start) : ~0u,
 		   rq->batch ? lower_32_bits(rq->batch->node.start) : ~0u);
 
-	size = rq->tail - rq->head;
-	if (rq->tail < rq->head)
-		size += rq->ring->size;
+	size = tail - head;
+	if (tail < head)
+		size += ring_size;
+
+	if (head > ring_size || tail > ring_size || size > 256) { // sanity check
+		// WARN(1, "print_request_ring: head %d, tail %d, ring_size %d, size %d", head, tail, ring_size, size);
+		return;
+	}
 
 	ring = kmalloc(size, GFP_ATOMIC);
 	if (ring) {
-		const void *vaddr = rq->ring->vaddr;
-		unsigned int head = rq->head;
 		unsigned int len = 0;
 
-		if (rq->tail < head) {
-			len = rq->ring->size - head;
+		if (tail < head) {
+			len = ring_size - head;
 			memcpy(ring, vaddr + head, len);
 			head = 0;
 		}
