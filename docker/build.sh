@@ -13,12 +13,10 @@ REVISION="$(cd "${SRC_DIR}"; git rev-parse HEAD)"
 
 mkdir -p "${OUT_DIR}" "${BUILD_DIR}" "${CCACHE_DIR}"
 
-. "${SCRIPT_DIR}/image/image.env"
-SNAPSHOT_URL="http://snapshot.debian.org/archive/debian/${SNAPSHOT}"
-
 docker build --force-rm --iidfile "${BUILD_DIR}/image.id" - <<EOF
-FROM debian:${IMAGE_TAG}
-RUN echo 'deb ${SNAPSHOT_URL} stretch main' > /etc/apt/sources.list && \
+FROM debian:buster-slim
+
+RUN sed 's/$/ contrib non-free/' -i /etc/apt/sources.list && \
     apt-get update && \
     apt-get install --no-install-recommends --assume-yes \
         gcc make flex bison ccache bc xz-utils \
