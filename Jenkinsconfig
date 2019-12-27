@@ -1,5 +1,0 @@
-job_name: "Linux kernel"
-out_dir: "kernel"
-emails:
-    - kvi@netup.ru
-script: "./docker/build.sh"
