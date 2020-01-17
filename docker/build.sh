@@ -21,7 +21,8 @@ RUN sed 's/$/ contrib non-free/' -i /etc/apt/sources.list && \
     apt-get install --no-install-recommends --assume-yes \
         gcc make flex bison ccache bc xz-utils \
         libc6-dev libssl-dev libelf-dev binutils-dev liblzma-dev libnuma-dev \
-        zlib1g-dev libiberty-dev libslang2-dev && \
+        zlib1g-dev libiberty-dev libslang2-dev \
+        dpkg-dev fakeroot build-essential:native kmod cpio && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 EOF
