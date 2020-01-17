@@ -25,7 +25,8 @@ RUN sed 's/$/ contrib non-free/' -i /etc/apt/sources.list && \
         dpkg-dev fakeroot build-essential:native kmod cpio && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd -u `id -u` build
+    useradd -u `id -u` build && \
+    chown `id -u` /mnt/
 EOF
 
 CONTAINER_ID=
