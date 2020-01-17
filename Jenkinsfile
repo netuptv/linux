@@ -8,9 +8,7 @@ catchError {
                 daysToKeepStr: '',
                 numToKeepStr: '50')),
             parameters([
-                booleanParam(description: 'Build deb packages', name: 'deb'),
-                booleanParam(description: 'Wipe out workspace before build', name: 'wipe')
-            ]),
+                booleanParam(description: 'Wipe out workspace before build', name: 'wipe')]),
             pipelineTriggers([
                 pollSCM('H/5 * * * *')
             ])
@@ -34,11 +32,7 @@ catchError {
 
         stage('Build') {
             dir('jenkins') {
-              if (params['deb']) {
-                sh "../docker/build.deb.sh"
-              } else {
                 sh "../docker/build.sh"
-              }
             }
         }
 
