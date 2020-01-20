@@ -24,9 +24,7 @@ RUN sed 's/$/ contrib non-free/' -i /etc/apt/sources.list && \
         zlib1g-dev libiberty-dev libslang2-dev \
         dpkg-dev fakeroot build-essential:native kmod cpio && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    useradd -u `id -u` build && \
-    chown `id -u` /mnt/
+    rm -rf /var/lib/apt/lists/*
 EOF
 
 CONTAINER_ID=
