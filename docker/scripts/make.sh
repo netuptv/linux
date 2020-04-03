@@ -16,13 +16,11 @@ cp "${SRC_DIR}/config.2.0" "${BUILD_DIR}/make/.config"
 
 cd ${SRC_DIR}
 make -j "$(nproc)" O="${BUILD_DIR}/make" tar-pkg
-make -j "$(nproc)" O="${BUILD_DIR}/make" DEBEMAIL='build <info@netup.ru>' bindeb-pkg
 
 RELEASE="$(cat ${BUILD_DIR}/make/include/config/kernel.release)"
 TAR_FILE="${BUILD_DIR}/make/linux-${RELEASE}-x86.tar"
 
 mv ${TAR_FILE} ${OUT_DIR}/linux-5.4.tar
-mv ${BUILD_DIR}/*.deb ${OUT_DIR}/
 
 mkdir -p ${PERF_BUILD_DIR}
 (
