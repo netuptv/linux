@@ -33,6 +33,7 @@
 * 
 */ 
 /*#include "gen_macros.h"   */
+#include <media/dvb_frontend.h>
 #include "stddefs.h"
 
 #include "oxford_anafe_init.h"
