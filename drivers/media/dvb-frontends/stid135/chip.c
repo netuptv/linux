@@ -33,6 +33,7 @@
 * 
 */
 
+#include <media/dvb_frontend.h>
 #include "i2c.h"
 #include "chip.h"
 

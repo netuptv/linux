@@ -9,4 +9,4 @@ stid135-objs := stid135-fe.o \
 
 obj-$(CONFIG_DVB_STID135) += stid135.o
 
-ccflags-y += -Idrivers/media/dvb-frontends -DHOST_PC
+ccflags-y += -I$(srctree)/drivers/media/dvb-frontends -DHOST_PC

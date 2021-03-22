@@ -33,6 +33,7 @@
  *
  */
 
+#include <media/dvb_frontend.h>
 #include "stid135_drv.h"
 #include "stid135_init.h"
 #include "stid135_initLLA_cut2.h"
