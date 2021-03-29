@@ -21,6 +21,7 @@
 #define HSR_LIFE_CHECK_INTERVAL		 2000 /* ms */
 #define HSR_NODE_FORGET_TIME		60000 /* ms */
 #define HSR_ANNOUNCE_INTERVAL		  100 /* ms */
+#define HSR_ENTRY_FORGET_TIME		  400 /* ms */
 
 /* By how much may slave1 and slave2 timestamps of latest received frame from
  * each node differ before we notify of communication problem?
@@ -217,7 +218,10 @@ struct hsr_priv {
 	u8 net_id;		/* for PRP, it occupies most significant 3 bits
 				 * of lan_id
 				 */
-	unsigned char		sup_multicast_addr[ETH_ALEN];
+	unsigned char		sup_multicast_addr[ETH_ALEN] __aligned(sizeof(u16));
+				/* Align to u16 boundary to avoid unaligned access
+				 * in ether_addr_equal
+				 */
 #ifdef	CONFIG_DEBUG_FS
 	struct dentry *node_tbl_root;
 #endif

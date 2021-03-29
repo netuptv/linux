@@ -3402,7 +3402,7 @@ out_array_args:
 		err = -EFAULT;
 out:
 	kvfree(array_buf);
-	kfree(mbuf);
+	kvfree(mbuf);
 	return err;
 }
 

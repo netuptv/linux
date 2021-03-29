@@ -290,7 +290,7 @@ cifs_statfs(struct dentry *dentry, struct kstatfs *buf)
 		rc = server->ops->queryfs(xid, tcon, cifs_sb, buf);
 
 	free_xid(xid);
-	return 0;
+	return rc;
 }
 
 static long cifs_fallocate(struct file *file, int mode, loff_t off, loff_t len)
@@ -469,7 +469,7 @@ cifs_show_cache_flavor(struct seq_file *s, struct cifs_sb_info *cifs_sb)
 static int cifs_show_devname(struct seq_file *m, struct dentry *root)
 {
 	struct cifs_sb_info *cifs_sb = CIFS_SB(root->d_sb);
-	char *devname = kstrdup(cifs_sb->ctx->UNC, GFP_KERNEL);
+	char *devname = kstrdup(cifs_sb->ctx->source, GFP_KERNEL);
 
 	if (devname == NULL)
 		seq_puts(m, "none");

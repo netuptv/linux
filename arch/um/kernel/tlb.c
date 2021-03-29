@@ -125,6 +125,9 @@ static int add_mmap(unsigned long virt, unsigned long phys, unsigned long len,
 	struct host_vm_op *last;
 	int fd = -1, ret = 0;
 
+	if (virt + len > STUB_START && virt < STUB_END)
+		return -EINVAL;
+
 	if (hvc->userspace)
 		fd = phys_mapping(phys, &offset);
 	else
@@ -162,7 +165,7 @@ static int add_munmap(unsigned long addr, unsigned long len,
 	struct host_vm_op *last;
 	int ret = 0;
 
-	if ((addr >= STUB_START) && (addr < STUB_END))
+	if (addr + len > STUB_START && addr < STUB_END)
 		return -EINVAL;
 
 	if (hvc->index != 0) {
@@ -191,6 +194,9 @@ static int add_mprotect(unsigned long addr, unsigned long len,
 {
 	struct host_vm_op *last;
 	int ret = 0;
+
+	if (addr + len > STUB_START && addr < STUB_END)
+		return -EINVAL;
 
 	if (hvc->index != 0) {
 		last = &hvc->ops[hvc->index - 1];
@@ -346,12 +352,11 @@ void fix_range_common(struct mm_struct *mm, unsigned long start_addr,
 
 	/* This is not an else because ret is modified above */
 	if (ret) {
+		struct mm_id *mm_idp = &current->mm->context.id;
+
 		printk(KERN_ERR "fix_range_common: failed, killing current "
 		       "process: %d\n", task_tgid_vnr(current));
-		/* We are under mmap_lock, release it such that current can terminate */
-		mmap_write_unlock(current->mm);
-		force_sig(SIGKILL);
-		do_signal(&current->thread.regs);
+		mm_idp->kill = 1;
 	}
 }
 
@@ -472,6 +477,10 @@ void flush_tlb_page(struct vm_area_struct *vma, unsigned long address)
 	struct mm_id *mm_id;
 
 	address &= PAGE_MASK;
+
+	if (address >= STUB_START && address < STUB_END)
+		goto kill;
+
 	pgd = pgd_offset(mm, address);
 	if (!pgd_present(*pgd))
 		goto kill;
@@ -607,58 +616,4 @@ void force_flush_all(void)
 		fix_range(mm, vma->vm_start, vma->vm_end, 1);
 		vma = vma->vm_next;
 	}
-}
-
-struct page_change_data {
-	unsigned int set_mask, clear_mask;
-};
-
-static int change_page_range(pte_t *ptep, unsigned long addr, void *data)
-{
-	struct page_change_data *cdata = data;
-	pte_t pte = READ_ONCE(*ptep);
-
-	pte_clear_bits(pte, cdata->clear_mask);
-	pte_set_bits(pte, cdata->set_mask);
-
-	set_pte(ptep, pte);
-	return 0;
-}
-
-static int change_memory(unsigned long start, unsigned long pages,
-			 unsigned int set_mask, unsigned int clear_mask)
-{
-	unsigned long size = pages * PAGE_SIZE;
-	struct page_change_data data;
-	int ret;
-
-	data.set_mask = set_mask;
-	data.clear_mask = clear_mask;
-
-	ret = apply_to_page_range(&init_mm, start, size, change_page_range,
-				  &data);
-
-	flush_tlb_kernel_range(start, start + size);
-
-	return ret;
-}
-
-int set_memory_ro(unsigned long addr, int numpages)
-{
-	return change_memory(addr, numpages, 0, _PAGE_RW);
-}
-
-int set_memory_rw(unsigned long addr, int numpages)
-{
-	return change_memory(addr, numpages, _PAGE_RW, 0);
-}
-
-int set_memory_nx(unsigned long addr, int numpages)
-{
-	return -EOPNOTSUPP;
-}
-
-int set_memory_x(unsigned long addr, int numpages)
-{
-	return -EOPNOTSUPP;
 }

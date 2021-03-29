@@ -147,7 +147,8 @@ static void __init init_resources(void)
 	bss_res.end = __pa_symbol(__bss_stop) - 1;
 	bss_res.flags = IORESOURCE_SYSTEM_RAM | IORESOURCE_BUSY;
 
-	mem_res_sz = (memblock.memory.cnt + memblock.reserved.cnt) * sizeof(*mem_res);
+	/* + 1 as memblock_alloc() might increase memblock.reserved.cnt */
+	mem_res_sz = (memblock.memory.cnt + memblock.reserved.cnt + 1) * sizeof(*mem_res);
 	mem_res = memblock_alloc(mem_res_sz, SMP_CACHE_BYTES);
 	if (!mem_res)
 		panic("%s: Failed to allocate %zu bytes\n", __func__, mem_res_sz);
@@ -293,6 +294,8 @@ void free_initmem(void)
 	unsigned long init_begin = (unsigned long)__init_begin;
 	unsigned long init_end = (unsigned long)__init_end;
 
-	set_memory_rw_nx(init_begin, (init_end - init_begin) >> PAGE_SHIFT);
+	if (IS_ENABLED(CONFIG_STRICT_KERNEL_RWX))
+		set_memory_rw_nx(init_begin, (init_end - init_begin) >> PAGE_SHIFT);
+
 	free_initmem_default(POISON_FREE_INITMEM);
 }
