@@ -43,6 +43,7 @@ Description : Contains a number of generic type declarations and defines.
 #ifndef __STDDEFS_H
 #define __STDDEFS_H
 
+#include <linux/types.h>
 
 /* Includes ---------------------------------------------------------------- */
 #ifdef __cplusplus

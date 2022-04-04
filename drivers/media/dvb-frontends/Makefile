@@ -10,6 +10,8 @@ ifdef CONFIG_DVB_RTL2832_SDR
 	ccflags-y += -I$(srctree)/drivers/media/usb/dvb-usb-v2
 endif
 
+ccflags-y += -I$(objtree)/include/generated/uapi
+
 stb0899-objs := stb0899_drv.o stb0899_algo.o
 stv0900-objs := stv0900_core.o stv0900_sw.o
 drxd-objs := drxd_firm.o drxd_hard.o
