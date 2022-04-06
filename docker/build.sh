@@ -14,15 +14,16 @@ OUT_DIR="$(pwd)/out/kernel"
 REVISION="$(cd "${SRC_DIR}"; git rev-parse HEAD)"
 [ -z "${BRANCH_NAME}" ] && \
     BRANCH_NAME="$(cd "${SRC_DIR}"; git symbolic-ref -q --short HEAD || echo unknown)"
+
+rm -rf "${BOOT_DIR}" "${MODULES_DIR}" "${APT_DIR}" "${MAN_DIR}"
+mkdir -p "${OUT_DIR}" "${BOOT_DIR}" "${MODULES_DIR}" "${APT_DIR}" "${MAN_DIR}" "${CCACHE_DIR}"
+
 if ! [ -d "${BUILD_DIR}"/ngbe-*/src ]; then (
     cd "${BUILD_DIR}"
     wget http://build.netup/downloads/ngbe-1.2.1.zip
     unzip ngbe-1.2.1.zip
     rm ngbe-1.2.1.zip
 ) fi
-
-rm -rf "${BOOT_DIR}" "${MODULES_DIR}" "${APT_DIR}" "${MAN_DIR}"
-mkdir -p "${OUT_DIR}" "${BOOT_DIR}" "${MODULES_DIR}" "${APT_DIR}" "${MAN_DIR}" "${CCACHE_DIR}"
 
 docker build --force-rm --iidfile "${BUILD_DIR}/image.id" - <<EOF
 FROM debian:buster-slim
