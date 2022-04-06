@@ -5,13 +5,24 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${0}")"; pwd)"
 SRC_DIR="${SCRIPT_DIR}/.."
 BUILD_DIR="$(pwd)/build/kernel"
+BOOT_DIR="${BUILD_DIR}/boot"
+MODULES_DIR="${BUILD_DIR}/modules"
+APT_DIR="${BUILD_DIR}/apt"
+MAN_DIR="${BUILD_DIR}/man"
 CCACHE_DIR="$(pwd)/ccache/kernel"
 OUT_DIR="$(pwd)/out/kernel"
 REVISION="$(cd "${SRC_DIR}"; git rev-parse HEAD)"
 [ -z "${BRANCH_NAME}" ] && \
     BRANCH_NAME="$(cd "${SRC_DIR}"; git symbolic-ref -q --short HEAD || echo unknown)"
+if ! [ -d "${BUILD_DIR}"/ngbe-*/src ]; then (
+    cd "${BUILD_DIR}"
+    wget http://build.netup/downloads/ngbe-1.2.1.zip
+    unzip ngbe-1.2.1.zip
+    rm ngbe-1.2.1.zip
+) fi
 
-mkdir -p "${OUT_DIR}" "${BUILD_DIR}" "${CCACHE_DIR}"
+rm -rf "${BOOT_DIR}" "${MODULES_DIR}" "${APT_DIR}" "${MAN_DIR}"
+mkdir -p "${OUT_DIR}" "${BOOT_DIR}" "${MODULES_DIR}" "${APT_DIR}" "${MAN_DIR}" "${CCACHE_DIR}"
 
 docker build --force-rm --iidfile "${BUILD_DIR}/image.id" - <<EOF
 FROM debian:buster-slim
@@ -36,6 +47,9 @@ CONTAINER_ID="$(docker run \
     --tty \
     --volume "${SRC_DIR}:/mnt/src:ro" \
     --volume "${BUILD_DIR}:/mnt/build" \
+    --volume "${BOOT_DIR}:/boot" \
+    --volume "${MODULES_DIR}:/lib/modules" \
+    --volume "${APT_DIR}:/etc/apt/apt.conf.d" \
     --volume "${CCACHE_DIR}:/mnt/ccache" \
     --volume "${OUT_DIR}:/mnt/out" \
     --user "${UID}" \

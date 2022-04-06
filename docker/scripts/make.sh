@@ -4,27 +4,29 @@ set -e
 
 SRC_DIR=$(cd $(dirname ${0})/../..; pwd)
 BUILD_DIR=/mnt/build
+MAKE_DIR="${BUILD_DIR}/make"
 CCACHE_DIR=/mnt/ccache
 OUT_DIR=/mnt/out/
-PERF_BUILD_DIR="${BUILD_DIR}/make/tools/perf"
+PERF_BUILD_DIR="${MAKE_DIR}/tools/perf"
 
 export PATH=/usr/lib/ccache/:${PATH}
 export CCACHE_DIR
 
-mkdir -p "${BUILD_DIR}/make"
-cp "${SRC_DIR}/config.2.0" "${BUILD_DIR}/make/.config"
+mkdir -p "${MAKE_DIR}"
+cp "${SRC_DIR}/config.2.0" "${MAKE_DIR}/.config"
 
 cd ${SRC_DIR}
-make -j "$(nproc)" O="${BUILD_DIR}/make" tar-pkg
+make -j "$(nproc)" O="${MAKE_DIR}"
+make -j "$(nproc)" O="${MAKE_DIR}" install modules_install
 
-RELEASE="$(cat ${BUILD_DIR}/make/include/config/kernel.release)"
-TAR_FILE="${BUILD_DIR}/make/linux-${RELEASE}-x86.tar"
+cd "${BUILD_DIR}"/ngbe-*/src
+make CFLAGS_EXTRA="-DNGBE_NO_LRO" KSRC="${SRC_DIR}" KOBJ="${MAKE_DIR}" MANDIR="${BUILD_DIR}/man" install
 
-mv ${TAR_FILE} ${OUT_DIR}/linux-5.4.tar
+tar cfC ${OUT_DIR}/linux-5.4.tar / boot lib/modules
 
 mkdir -p ${PERF_BUILD_DIR}
 (
-    cd tools/perf
+    cd "${SRC_DIR}/tools/perf"
     make LDFLAGS=-static O=${PERF_BUILD_DIR}
 )
 cp ${PERF_BUILD_DIR}/perf ${OUT_DIR}/
