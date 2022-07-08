@@ -876,10 +876,10 @@ static int netup_unidvb_initdev(
 	netup_unidvb_request_modules(&pci_dev->dev);
 
 	/* Check card revision */
-	if (pci_dev->revision != NETUP_PCI_DEV_REVISION) {
+	if (pci_dev->revision < NETUP_PCI_DEV_REVISION_MIN || NETUP_PCI_DEV_REVISION_MAX < pci_dev->revision) {
 		dev_err(&pci_dev->dev,
-			"netup_unidvb: expected card revision %d, got %d\n",
-			NETUP_PCI_DEV_REVISION, pci_dev->revision);
+			"netup_unidvb: expected card revision in range %d-%d, got %d\n",
+			NETUP_PCI_DEV_REVISION_MIN, NETUP_PCI_DEV_REVISION_MAX, pci_dev->revision);
 		dev_err(&pci_dev->dev,
 			"Please upgrade firmware!\n");
 		dev_err(&pci_dev->dev,
