@@ -29,7 +29,8 @@
 #define NETUP_UNIDVB_NAME	"netup_unidvb"
 #define NETUP_UNIDVB_VERSION	"0.0.1"
 #define NETUP_VENDOR_ID		0x1b55
-#define NETUP_PCI_DEV_REVISION  0x2
+#define NETUP_PCI_DEV_REVISION_MIN  0x2
+#define NETUP_PCI_DEV_REVISION_MAX  0x3
 
 /* IRQ-related regisers */
 #define REG_ISR			0x4890
