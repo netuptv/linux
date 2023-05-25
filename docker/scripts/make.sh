@@ -20,7 +20,7 @@ make -j "$(nproc)" O="${BUILD_DIR}/make" tar-pkg
 RELEASE="$(cat ${BUILD_DIR}/make/include/config/kernel.release)"
 TAR_FILE="${BUILD_DIR}/make/linux-${RELEASE}-x86.tar"
 
-mv ${TAR_FILE} ${OUT_DIR}/linux-5.17.tar
+mv ${TAR_FILE} ${OUT_DIR}/linux-6.1.tar
 
 mkdir -p ${PERF_BUILD_DIR}
 (
