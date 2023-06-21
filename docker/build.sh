@@ -27,22 +27,35 @@ RUN sed 's/$/ contrib non-free/' -i /etc/apt/sources.list && \
     rm -rf /var/lib/apt/lists/*
 EOF
 
-CONTAINER_ID=
-trap 'docker rm -f "${CONTAINER_ID}"' EXIT
+if [ "$1" == 'shell' ]; then
+    docker run \
+        --interactive \
+        --rm \
+        --tty \
+        --volume "${SRC_DIR}:/mnt/src" \
+        --volume "${BUILD_DIR}:/mnt/build" \
+        --volume "${CCACHE_DIR}:/mnt/ccache" \
+        --volume "${OUT_DIR}:/mnt/out" \
+        --user "${UID}" \
+        "$( head -n1 "${BUILD_DIR}/image.id" )" bash
 
-CONTAINER_ID="$(docker run \
-    --detach \
-    --rm \
-    --tty \
-    --volume "${SRC_DIR}:/mnt/src:ro" \
-    --volume "${BUILD_DIR}:/mnt/build" \
-    --volume "${CCACHE_DIR}:/mnt/ccache" \
-    --volume "${OUT_DIR}:/mnt/out" \
-    --user "${UID}" \
-    "$( head -n1 "${BUILD_DIR}/image.id" )" \
-    /mnt/src/docker/scripts/make.sh )"
-docker logs --follow "${CONTAINER_ID}" &
-[ $(docker wait "${CONTAINER_ID}") -eq 0 ]
-trap - EXIT
+else
+    CONTAINER_ID=
+    trap 'docker rm -f "${CONTAINER_ID}"' EXIT
+    CONTAINER_ID="$(docker run \
+        --detach \
+        --rm \
+        --tty \
+        --volume "${SRC_DIR}:/mnt/src:ro" \
+        --volume "${BUILD_DIR}:/mnt/build" \
+        --volume "${CCACHE_DIR}:/mnt/ccache" \
+        --volume "${OUT_DIR}:/mnt/out" \
+        --user "${UID}" \
+        "$( head -n1 "${BUILD_DIR}/image.id" )" \
+        /mnt/src/docker/scripts/make.sh )"
+    docker logs --follow "${CONTAINER_ID}" &
+    [ $(docker wait "${CONTAINER_ID}") -eq 0 ]
+    trap - EXIT
 
-printf 'kernel_revision="%s %s %s"\n' "${REVISION}" "${BRANCH_NAME}" "${BUILD_URL}" > "${OUT_DIR}/build.info"
+    printf 'kernel_revision="%s %s %s"\n' "${REVISION}" "${BRANCH_NAME}" "${BUILD_URL}" > "${OUT_DIR}/build.info"
+fi
