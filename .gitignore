@@ -172,3 +172,5 @@ sphinx_*/
 /rust-project.json
 # Jenkins build dir
 /jenkins
+
+/build
