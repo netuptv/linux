@@ -22,7 +22,7 @@ RUN sed 's/$/ contrib non-free/' -i /etc/apt/sources.list && \
         gcc make flex bison ccache bc xz-utils \
         libc6-dev libssl-dev libelf-dev binutils-dev liblzma-dev libnuma-dev \
         zlib1g-dev libiberty-dev libslang2-dev python3 \
-        dpkg-dev fakeroot build-essential:native kmod cpio && \
+        dpkg-dev fakeroot build-essential:native kmod cpio libncurses-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 EOF
