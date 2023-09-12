@@ -174,3 +174,5 @@ sphinx_*/
 /jenkins
 
 /build
+/ccache
+/out
