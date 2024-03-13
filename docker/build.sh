@@ -14,15 +14,16 @@ REVISION="$(cd "${SRC_DIR}"; git rev-parse HEAD)"
 mkdir -p "${OUT_DIR}" "${BUILD_DIR}" "${CCACHE_DIR}"
 
 docker build --force-rm --iidfile "${BUILD_DIR}/image.id" - <<EOF
-FROM debian:buster-slim
+FROM debian:bookworm-slim
 
-RUN sed 's/$/ contrib non-free/' -i /etc/apt/sources.list && \
-    apt-get update && \
+RUN apt-get update && \
     apt-get install --no-install-recommends --assume-yes \
         gcc make flex bison ccache bc xz-utils \
         libc6-dev libssl-dev libelf-dev binutils-dev liblzma-dev libnuma-dev \
         zlib1g-dev libiberty-dev libslang2-dev python3 \
-        dpkg-dev fakeroot build-essential:native kmod cpio libncurses-dev && \
+        dpkg-dev fakeroot build-essential:native kmod cpio libncurses-dev \
+        libdw-dev systemtap-sdt-dev libunwind-dev libperl-dev python3-dev \
+        libpfm4-dev libzstd-dev libtraceevent-dev pkg-config && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 EOF
