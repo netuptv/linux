@@ -46,7 +46,7 @@ node() {
     step([
         $class: 'Mailer',
         notifyEveryUnstableBuild: true,
-        recipients: 'kvi@netup.ru',
+        recipients: 'abutkeev@netup.ru',
         sendToIndividuals: false
     ])
 }
