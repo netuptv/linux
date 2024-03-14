@@ -12,7 +12,7 @@ export PATH=/usr/lib/ccache/:${PATH}
 export CCACHE_DIR
 
 mkdir -p "${BUILD_DIR}/make"
-cp "${SRC_DIR}/config.2.0" "${BUILD_DIR}/make/.config"
+cp "${SRC_DIR}/config" "${BUILD_DIR}/make/.config"
 
 cd ${SRC_DIR}
 make -j "$(nproc)" O="${BUILD_DIR}/make" tar-pkg
