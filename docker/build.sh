@@ -17,6 +17,7 @@ docker build --force-rm --iidfile "${BUILD_DIR}/image.id" - <<EOF
 FROM debian:buster-slim
 
 RUN sed 's/$/ contrib non-free/' -i /etc/apt/sources.list && \
+    sed 's/deb.debian.org/archive.debian.org/' -i /etc/apt/sources.list && \
     apt-get update && \
     apt-get install --no-install-recommends --assume-yes \
         gcc make flex bison ccache bc xz-utils \
